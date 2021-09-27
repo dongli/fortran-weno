@@ -63,12 +63,29 @@ def reconstruct_polynomial_2d(m, n, Fi=None, mask=None):
 				tmp.append(symbols('a_{' + str(i) + str(j) + '}'))
 	a = Matrix(tmp)
 
+	# The mask used to filter monomials cab be different, the ones should always at the right-top corners.
 	x, y, xi, yi, dx, dy = symbols('x y x_i y_i \Delta{x} \Delta{y}')
 	tmp = []
-	for j in range(m):
-		for i in range(n):
-			if mask == None or mask[j,i] == 0:
-				tmp.append(x**i * y**j)
+	if mask[0,0] == 1:
+		for j in range(m):
+			for i in range(n):
+				if mask == None or mask[m-j-1,n-i-1] == 0:
+					tmp.append(x**i * y**j)
+	elif mask[-1,0] == 1:
+		for j in range(m):
+			for i in range(n):
+				if mask == None or mask[j,n-i-1] == 0:
+					tmp.append(x**i * y**j)
+	elif mask[0,-1] == 1:
+		for j in range(m):
+			for i in range(n):
+				if mask == None or mask[m-j-1,i] == 0:
+					tmp.append(x**i * y**j)
+	else:
+		for j in range(m):
+			for i in range(n):
+				if mask == None or mask[j,i] == 0:
+					tmp.append(x**i * y**j)
 	p = Matrix(tmp)
 
 	f = sum(HadamardProduct(a, p, evaluate=True))
