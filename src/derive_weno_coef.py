@@ -45,7 +45,7 @@ def reconstruct_polynomial_1d(m):
 
 	return f
 
-def reconstruct_polynomial_2d(m, n):
+def reconstruct_polynomial_2d(m, n, Fi=None, mask=None):
 	'''
 		Reconstruct 2D polynomial from averaged values on the stencils.
 
@@ -59,42 +59,60 @@ def reconstruct_polynomial_2d(m, n):
 	tmp = []
 	for j in range(m):
 		for i in range(n):
-			tmp.append(symbols('a_{' + str(i) + str(j) + '}'))
+			if mask == None or mask[j,i] == 0:
+				tmp.append(symbols('a_{' + str(i) + str(j) + '}'))
 	a = Matrix(tmp)
 
 	x, y, xi, yi, dx, dy = symbols('x y x_i y_i \Delta{x} \Delta{y}')
 	tmp = []
 	for j in range(m):
 		for i in range(n):
-			tmp.append(x**i * y**j)
+			if mask == None or mask[j,i] == 0:
+				tmp.append(x**i * y**j)
 	p = Matrix(tmp)
 
 	f = sum(HadamardProduct(a, p, evaluate=True))
 
 	F = simplify(integrate(integrate(f, (x, (xi - dx / 2, xi + dx / 2))), (y, (yi - dy / 2, yi + dy / 2))) / (dx * dy))
-	for k in range(m * n):
+	for k in range(len(a)):
 		F = F.collect(a[k])
 	F = expand(F.subs(xi, x).subs(yi, y))
 
 	tmp = []
+	j = 0
 	for cy in range(-int((n-1)/2), int((n-1)/2)+1):
+		i = 0
 		for cx in range(-int((m-1)/2), int((m-1)/2)+1):
-			g = expand(simplify(F.subs(x, cx * dx).subs(y, cy * dy)))
-			tmp.append([])
-			for k in range(m * n):
-				tmp[-1].append(g.coeff(a[k]))
+			if mask == None or mask[j,i] == 0:
+				g = expand(simplify(F.subs(x, cx * dx).subs(y, cy * dy)))
+				tmp.append([])
+				for k in range(len(a)):
+					tmp[-1].append(g.coeff(a[k]))
+			i += 1
+		j += 1
 	A = Matrix(tmp)
 
-	tmp = []
-	for j in range(m):
-		for i in range(n):
-			tmp.append(symbols('F_{' + str(i) + str(j) + '}'))
-	Fi = Matrix(tmp)
+	if not Fi:
+		tmp = []
+		for j in range(m):
+			for i in range(n):
+				if mask == None or mask[j,i] == 0:
+					tmp.append(symbols('F_{' + str(i) + str(j) + '}'))
+		Fi = Matrix(tmp)
+	elif mask != None:
+		tmp = []
+		k = 0
+		for j in range(m):
+			for i in range(n):
+				if mask == None or mask[j,i] == 0:
+					tmp.append(Fi[k])
+				k += 1
+		Fi = Matrix(tmp)
 
 	a = Matrix(list(a))
 	ak = list(simplify(linsolve(A * a - Fi, list(a))))[0]
 
-	for k in range(m * n): f = f.subs(a[k], ak[k])
+	for k in range(len(a)): f = f.subs(a[k], ak[k])
 	f = expand(f)
 
 	return f
