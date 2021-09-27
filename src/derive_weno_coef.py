@@ -77,8 +77,8 @@ def reconstruct_polynomial_2d(m, n):
 	F = expand(F.subs(xi, x).subs(yi, y))
 
 	tmp = []
-	for cx in range(-int((m-1)/2), int((m-1)/2)+1):
-		for cy in range(-int((n-1)/2), int((n-1)/2)+1):
+	for cy in range(-int((n-1)/2), int((n-1)/2)+1):
+		for cx in range(-int((m-1)/2), int((m-1)/2)+1):
 			g = expand(simplify(F.subs(x, cx * dx).subs(y, cy * dy)))
 			tmp.append([])
 			for k in range(m * n):
