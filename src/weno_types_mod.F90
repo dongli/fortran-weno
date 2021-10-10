@@ -1,5 +1,8 @@
 module weno_types_mod
 
+  use poly_utils_mod
+  use math_mod
+
   implicit none
 
   private
@@ -8,63 +11,99 @@ module weno_types_mod
 
   type weno_tensor_product_type
     logical :: initialized = .false.
-    integer :: nd  = 0                      ! Dimension number
-    integer :: sw  = 0                      ! Stencil width
-    integer :: npt = 0                      ! Number of evaluation points
-    integer, allocatable :: mask(:,:)       ! Mask unavailable nodes by 0
-    real(8), allocatable :: iA(:,:)         ! Polynomial integral coefficient matrix inverse
-    real(8), allocatable :: xp(:)           ! X coordinate of evaluation point
-    real(8), allocatable :: yp(:)           ! Y coordinate of evaluation point
-    real(8), allocatable :: coefs(:,:)      ! Reconstruction coefficients for each point (only on sub-stencils)
+    integer :: id     = 0             ! Sub-stencil ID
+    integer :: nd     = 0             ! Dimension number
+    integer :: sw     = 0             ! Stencil width
+    integer :: sub_sw = 0             ! Sub-stencil width
+    integer :: nc     = 0             ! Number of cells
+    integer :: ns     = 0             ! Number of sub-stencils
+    integer :: npt    = 0             ! Number of evaluation points
+    integer :: di0    = 0
+    integer :: dj0    = 0
+    integer :: di     = 0
+    integer :: dj     = 0
+    integer , allocatable :: mask(:,:) ! Mask unavailable nodes by 0
+    real(8 ), allocatable :: x(:)      ! X coordinate of evaluation point
+    real(8 ), allocatable :: y(:)      ! Y coordinate of evaluation point
+    real(16), allocatable :: p(:,:)    ! Monomial terms on each evaluation point
+    real(16), allocatable :: iA_p(:,:) ! p * iA
+    real(16), allocatable :: ic(:,:)   ! Ideal coefficients for combining sub-stencils (only on stencil)
     type(weno_tensor_product_type), allocatable :: subs(:) ! Sub-stencils
   contains
-    procedure :: init      => weno_tensor_product_init
-    procedure :: add_point => weno_tensor_product_add_point
-    procedure :: clear     => weno_tensor_product_clear
+    procedure :: init              => weno_tensor_product_init
+    procedure :: add_point         => weno_tensor_product_add_point
+    procedure :: calc_recon_matrix => weno_tensor_product_calc_recon_matrix
+    procedure :: calc_ideal_coefs  => weno_tensor_product_calc_ideal_coefs
+    procedure :: clear             => weno_tensor_product_clear
     final :: weno_tensor_product_final
   end type weno_tensor_product_type
 
 contains
 
-  subroutine weno_tensor_product_init(this, nd, sw, no_subs)
+  subroutine weno_tensor_product_init(this, nd, sw, di0, dj0, di, dj, mask, id, has_subs)
 
     class(weno_tensor_product_type), intent(inout) :: this
     integer, intent(in) :: nd
     integer, intent(in) :: sw
-    logical, intent(in), optional :: no_subs
+    integer, intent(in), optional :: di0
+    integer, intent(in), optional :: dj0
+    integer, intent(in), optional :: di
+    integer, intent(in), optional :: dj
+    integer, intent(in), optional :: mask(:,:)
+    integer, intent(in), optional :: id
+    logical, intent(in), optional :: has_subs
 
-    integer i
+    integer i, j, k
 
     call this%clear()
 
     this%sw = sw
     this%nd = nd
+    this%nc = sw**nd
 
-    select case (nd)
-    case (1)
-      allocate(this%mask(sw,1 ))
-    case (2)
-      allocate(this%mask(sw,sw))
-    end select
-    allocate(this%iA  (sw**nd,sw**nd))
+    allocate(this%mask(sw,sw**(nd-1)))
+
+    if (present(id )) this%id  = id
+    if (present(di0)) this%di0 = di0
+    if (present(dj0)) this%dj0 = dj0
+    if (present(di )) this%di  = di
+    if (present(dj )) this%dj  = dj
+
+    if (present(mask)) then
+      this%mask = mask
+    else
+      this%mask = 1
+    end if
 
     ! Initialize sub-stencils.
-    if (merge(.not. no_subs, .true., present(no_subs))) then
-      select case (nd)
-      case (1)
-        select case (sw)
-        case (5)
-          allocate(this%subs(3))
-        end select
-      case (2)
-        select case (sw)
-        case (5)
-          allocate(this%subs(9))
-          do i = 1, 9
-            call this%subs(i)%init(nd, 3, no_subs=.true.)
-          end do
-        end select
+    if (merge(has_subs, .true., present(has_subs))) then
+      ! Set sub-stencil size.
+      select case (sw)
+      case (5)
+        this%sub_sw = 3
       end select
+      this%ns = this%sub_sw**nd
+      allocate(this%subs(this%ns))
+      k = 1
+      do j = 1, this%sub_sw**(nd - 1)
+        do i = 1, this%sub_sw
+          call this%subs(k)%init(nd=nd, sw=this%sub_sw, di0=i-int(this%sw/2), dj0=j-int(this%sw/2), &
+                                 di=i-1, dj=j-1, id=k, has_subs=.false.)
+          this%subs(k)%mask = this%mask(i:i+this%sub_sw-1,j:j+this%sub_sw-1)
+          k = k + 1
+        end do
+      end do
+      !do k = 1, this%ns
+      !  print '(5I5)', k, this%subs(k)%di0, this%subs(k)%dj0, this%subs(k)%di, this%subs(k)%dj
+      !  do j = this%subs(k)%sw, 1, -1
+      !    do i = 1, this%subs(k)%sw
+      !      write(*, '(I5)', advance='no') this%subs(k)%mask(i,j)
+      !    end do
+      !    write(*, *)
+      !  end do
+      !  print *, '---'
+      !end do
+      !stop
     end if
 
     this%initialized = .true.
@@ -78,30 +117,221 @@ contains
     real(8), intent(in) :: y
 
     real(8), allocatable :: tmp(:)
-    integer i
+    integer i, j, k
 
     this%npt = this%npt + 1
 
     allocate(tmp(this%npt))
     do i = 1, this%npt - 1
-      tmp(i) = this%xp(i)
+      tmp(i) = this%x(i)
     end do
-    tmp(this%npt) = x
-    if (allocated(this%xp)) deallocate(this%xp)
-    allocate(this%xp(this%npt))
-    this%xp = tmp
+    tmp(this%npt) = x - this%di0 ! Convert to local coordinate.
+    if (allocated(this%x)) deallocate(this%x)
+    allocate(this%x(this%npt))
+    this%x = tmp
     do i = 1, this%npt - 1
-      tmp(i) = this%yp(i)
+      tmp(i) = this%y(i)
     end do
-    tmp(this%npt) = y
-    if (allocated(this%yp)) deallocate(this%yp)
-    allocate(this%yp(this%npt))
-    this%yp = tmp
+    tmp(this%npt) = y - this%dj0 ! Convert to local coordinate.
+    if (allocated(this%y)) deallocate(this%y)
+    allocate(this%y(this%npt))
+    this%y = tmp
+    deallocate(tmp)
 
-    if (allocated(this%coefs)) deallocate(this%coefs)
-    allocate(this%coefs(this%sw**this%nd,this%npt))
+    if (allocated(this%subs)) then
+      ! Add point to sub-stencils.
+      do k = 1, this%ns
+        call this%subs(k)%add_point(x, y)
+      end do
+      !print *, this%npt, x, y
+      !do k = 1, this%ns
+      !  print *, k, this%subs(k)%x(this%npt), this%subs(k)%y(this%npt)
+      !end do
+      !stop
+    end if
 
   end subroutine weno_tensor_product_add_point
+
+  subroutine weno_tensor_product_calc_recon_matrix(this, ierr)
+
+    class(weno_tensor_product_type), intent(inout) :: this
+    integer, intent(out) :: ierr
+
+    real(16), allocatable :: A(:,:), iA(:,:)
+    integer , allocatable :: kmap(:)
+    logical mirror_i, mirror_j
+    integer i, j, k, p, n
+
+    if (allocated(this%p   )) deallocate(this%p   )
+    if (allocated(this%iA_p)) deallocate(this%iA_p)
+    allocate(this%p   (this%nc,this%npt)); this%p    = 0
+    allocate(this%iA_p(this%nc,this%npt)); this%iA_p = 0
+
+    allocate(kmap(this%nc)); kmap = 0
+
+    if (this%mask(1,1) == 0) then
+      mirror_i = .true. ; mirror_j = .true.
+    else if (this%mask(this%sw,1) == 0) then
+      mirror_i = .false.; mirror_j = .true.
+    else if (this%mask(1,this%sw) == 0) then
+      mirror_i = .true. ; mirror_j = .false.
+    else
+      mirror_i = .false.; mirror_j = .false.
+    end if
+
+    ! Set the p for each evaluation point.
+    ! Select monomials according to mask.
+    do p = 1, this%npt
+      k = 1; n = 1
+      do j = 1, this%sw
+        do i = 1, this%sw
+          if (this%mask(merge(this%sw-i+1, i, mirror_i),merge(this%sw-j+1, j, mirror_j)) == 1) then
+            call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, this%p(k,p))
+            kmap(n) = k; k = k + 1
+          end if
+          n = n + 1
+        end do
+      end do
+    end do
+
+    ! Calculate inverse of integral coefficient matrix.
+    allocate( A(this%nc,this%nc))
+    allocate(iA(this%nc,this%nc))
+    call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, A, this%mask)
+    n = count(this%mask == 1)
+    call inverse_matrix(A(1:n,1:n), iA(1:n,1:n), ierr)
+    ! Rearrange iA and p.
+    do n = this%nc, 1, -1
+      if (kmap(n) /= 0) then
+        iA(:,n) = iA(:,kmap(n))
+      else
+        iA(:,n) = 0
+      end if
+    end do
+    do n = this%nc, 1, -1
+      if (kmap(n) /= 0) then
+        iA(n,:) = iA(kmap(n),:)
+      else
+        iA(n,:) = 0
+      end if
+    end do
+    do n = this%nc, 1, -1
+      if (kmap(n) /= 0) then
+        this%p(n,:) = this%p(kmap(n),:)
+      else
+        this%p(n,:) = 0
+      end if
+    end do
+    !print *, this%x(1), this%y(1)
+    !if (this%id == 9) then
+    !  do j = this%sw, 1, -1
+    !    do i = 1, this%sw
+    !      write(*, '(I5)', advance='no') this%mask(i,j)
+    !    end do
+    !    write(*, *)
+    !  end do
+    !  do j = 1, size(A, 2)
+    !    do i = 1, size(A, 1)
+    !      write(*, '(F10.5)', advance='no') A(i,j)
+    !    end do
+    !    write(*, *)
+    !  end do
+    !  print *, '---'
+    !  do j = 1, size(A, 2)
+    !    do i = 1, size(A, 1)
+    !      write(*, '(F10.5)', advance='no') iA(i,j)
+    !    end do
+    !    write(*, *)
+    !  end do
+    !  print *, '---'
+    !  do i = 1, this%nc
+    !    print *, this%p(i,1)
+    !  end do
+    !  print *, '---'
+    !  print *, kmap
+    !  stop
+    !end if
+    if (ierr /= 0) then
+      deallocate(A, iA, kmap)
+      return
+    end if
+
+    this%iA_p = matmul(iA, this%p)
+    ! Rearrange iA_p.
+
+    deallocate(A, iA, kmap)
+
+  end subroutine weno_tensor_product_calc_recon_matrix
+
+  subroutine weno_tensor_product_calc_ideal_coefs(this, ierr)
+
+    class(weno_tensor_product_type), intent(inout) :: this
+    integer, intent(out) :: ierr
+
+    real(16), allocatable, dimension(:,:) :: A, AtA, iAtA
+    integer i, j, k, p, m, n
+
+    if (.not. allocated(this%subs)) then
+      ierr = 1
+      return
+    end if
+
+    do k = 1, this%ns
+      call this%subs(k)%calc_recon_matrix(ierr)
+      if (ierr /= 0) return
+    end do
+    call this%calc_recon_matrix(ierr)
+
+    if (allocated(this%ic)) deallocate(this%ic)
+    allocate(this%ic(this%ns,this%npt)); this%ic = 0
+
+    allocate(   A(this%nc,this%ns)); A = 0
+    allocate( AtA(this%ns,this%ns))
+    allocate(iAtA(this%ns,this%ns))
+    do p = 1, this%npt
+      do k = 1, this%ns
+        do j = 1, this%sub_sw
+          do i = 1, this%sub_sw
+            if (this%subs(k)%mask(i,j) == 1) then
+              m = (j + this%subs(k)%dj - 1) * this%sw     + i + (this%subs(k)%di)
+              n = (j                   - 1) * this%sub_sw + i
+              A(m,k) = this%subs(k)%iA_p(n,p)
+            end if
+          end do
+        end do
+      end do
+      AtA = matmul(transpose(A), A)
+      call inverse_matrix(AtA, iAtA, ierr)
+      if (ierr /= 0) return
+      this%ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iA_p(:,p))
+    end do
+    !do k = 1, this%ns
+    !  do n = 1, this%subs(k)%nc
+    !    write(*, '(F10.5)', advance='no') this%subs(k)%iA_p(n,1)
+    !  end do
+    !  write(*, *)
+    !end do
+    !do m = 1, this%nc
+    !  do k = 1, this%ns
+    !    write(*, '(F10.5)', advance='no') A(1,m,k)
+    !  end do
+    !  write(*, *)
+    !end do
+    !do i = 1, this%ns
+    !  do j = 1, this%ns
+    !    write(*, '(F10.5)', advance='no') iAtA_At(i,j)
+    !  end do
+    !  write(*, *)
+    !end do
+    do i = 1, this%ns
+      write(*, '(F10.5)') this%ic(i,1)
+    end do
+    if (abs(sum(matmul(A, this%ic(:,1)) - this%iA_p(:,1))) > 1.0e-30) then
+      ierr = 3
+    end if
+    deallocate(A, AtA, iAtA)
+
+  end subroutine weno_tensor_product_calc_ideal_coefs
 
   subroutine weno_tensor_product_clear(this)
 
@@ -109,14 +339,20 @@ contains
 
     this%sw  = 0
     this%nd  = 0
+    this%nc  = 0
+    this%ns  = 0
     this%npt = 0
+    this%di0 = 0
+    this%dj0 = 0
 
-    if (allocated(this%mask )) deallocate(this%mask )
-    if (allocated(this%iA   )) deallocate(this%iA   )
-    if (allocated(this%xp   )) deallocate(this%xp   )
-    if (allocated(this%yp   )) deallocate(this%yp   )
-    if (allocated(this%coefs)) deallocate(this%coefs)
-    if (allocated(this%subs )) deallocate(this%subs )
+    if (allocated(this%mask)) deallocate(this%mask)
+    if (allocated(this%p   )) deallocate(this%p   )
+    if (allocated(this%iA_p)) deallocate(this%iA_p)
+    if (allocated(this%x   )) deallocate(this%x   )
+    if (allocated(this%y   )) deallocate(this%y   )
+    if (allocated(this%p   )) deallocate(this%p   )
+    if (allocated(this%ic  )) deallocate(this%ic  )
+    if (allocated(this%subs)) deallocate(this%subs)
 
     this%initialized = .false.
 

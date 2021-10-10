@@ -1,20 +1,55 @@
 program test
 
-  use poly_utils_mod
+  use weno
 
   implicit none
 
-  integer, parameter :: m = 3
-  real(8) A(m*m,m*m)
-  integer i, j
+  type(weno_tensor_product_type), allocatable :: weno2d
+  integer mask(5,5)
+  integer i, j, ierr
 
-  call calc_poly_tensor_product_integral_coef_matrix(m, m, A)
+  mask = 1
+  mask(5,5) = 0
+  mask(4,5) = 0
 
-  do j = 1, m * m
-    do i = 1, m * m
-      write(*, '(F10.5)', advance='no') A(i,j)
+  do j = 5, 1, -1
+    do i = 1, 5
+      write(*, '(I5)', advance='no') mask(i,j)
     end do
     write(*, *)
   end do
+  write(*, *)
+
+  allocate(weno2d)
+
+  !  _____________________________
+  ! |     |     |     |     |     |
+  ! |     |     |     |     |     |
+  ! |_____|_____|_____|_____|_____|
+  ! |     |     |     |     |     |
+  ! |     |     |     |     |     |
+  ! |_____|_____|__x__|_____|_____|
+  ! |     |     |     |     |     |
+  ! |     |     xi0,j0x     |     |
+  ! |_____|_____|__x__|_____|_____|
+  ! |     |     |     |     |     |
+  ! |     |     |     |     |     |
+  ! |_____|_____|_____|_____|_____|
+  ! |     |     |     |     |     |
+  ! |     |     |     |     |     |
+  ! |_____|_____|_____|_____|_____|
+
+  call weno2d%init(nd=2, sw=5, mask=mask)
+  call weno2d%add_point(x=-0.5d0, y= 0.0d0)
+  call weno2d%add_point(x= 0.5d0, y= 0.0d0)
+  call weno2d%add_point(x= 0.0d0, y=-0.5d0)
+  call weno2d%add_point(x= 0.0d0, y= 0.5d0)
+  call weno2d%calc_ideal_coefs(ierr)
+  if (ierr /= 0) then
+    write(*, *) 'Failed to calculate WENO ideal coefficients!'
+    stop 1
+  end if
+
+  deallocate(weno2d)
 
 end program test
