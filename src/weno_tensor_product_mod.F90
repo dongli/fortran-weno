@@ -93,17 +93,6 @@ contains
           k = k + 1
         end do
       end do
-      !do k = 1, this%ns
-      !  print '(5I5)', k, this%subs(k)%di0, this%subs(k)%dj0, this%subs(k)%di, this%subs(k)%dj
-      !  do j = this%subs(k)%sw, 1, -1
-      !    do i = 1, this%subs(k)%sw
-      !      write(*, '(I5)', advance='no') this%subs(k)%mask(i,j)
-      !    end do
-      !    write(*, *)
-      !  end do
-      !  print *, '---'
-      !end do
-      !stop
     end if
 
     this%initialized = .true.
@@ -143,11 +132,6 @@ contains
       do k = 1, this%ns
         call this%subs(k)%add_point(x, y)
       end do
-      !print *, this%npt, x, y
-      !do k = 1, this%ns
-      !  print *, k, this%subs(k)%x(this%npt), this%subs(k)%y(this%npt)
-      !end do
-      !stop
     end if
 
   end subroutine weno_tensor_product_add_point
@@ -222,35 +206,6 @@ contains
         this%p(n,:) = 0
       end if
     end do
-    !print *, this%x(1), this%y(1)
-    !if (this%id == 9) then
-    !  do j = this%sw, 1, -1
-    !    do i = 1, this%sw
-    !      write(*, '(I5)', advance='no') this%mask(i,j)
-    !    end do
-    !    write(*, *)
-    !  end do
-    !  do j = 1, size(A, 2)
-    !    do i = 1, size(A, 1)
-    !      write(*, '(F10.5)', advance='no') A(i,j)
-    !    end do
-    !    write(*, *)
-    !  end do
-    !  print *, '---'
-    !  do j = 1, size(A, 2)
-    !    do i = 1, size(A, 1)
-    !      write(*, '(F10.5)', advance='no') iA(i,j)
-    !    end do
-    !    write(*, *)
-    !  end do
-    !  print *, '---'
-    !  do i = 1, this%nc
-    !    print *, this%p(i,1)
-    !  end do
-    !  print *, '---'
-    !  print *, kmap
-    !  stop
-    !end if
     if (ierr /= 0) then
       deallocate(A, iA, kmap)
       return
@@ -305,24 +260,6 @@ contains
       if (ierr /= 0) return
       this%ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iA_p(:,p))
     end do
-    !do k = 1, this%ns
-    !  do n = 1, this%subs(k)%nc
-    !    write(*, '(F10.5)', advance='no') this%subs(k)%iA_p(n,1)
-    !  end do
-    !  write(*, *)
-    !end do
-    !do m = 1, this%nc
-    !  do k = 1, this%ns
-    !    write(*, '(F10.5)', advance='no') A(1,m,k)
-    !  end do
-    !  write(*, *)
-    !end do
-    !do i = 1, this%ns
-    !  do j = 1, this%ns
-    !    write(*, '(F10.5)', advance='no') iAtA_At(i,j)
-    !  end do
-    !  write(*, *)
-    !end do
     do i = 1, this%ns
       write(*, '(F10.5)') this%ic(i,1)
     end do
