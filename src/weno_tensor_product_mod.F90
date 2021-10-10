@@ -283,11 +283,10 @@ contains
     this%dj0 = 0
 
     if (allocated(this%mask)) deallocate(this%mask)
-    if (allocated(this%p   )) deallocate(this%p   )
-    if (allocated(this%iA_p)) deallocate(this%iA_p)
     if (allocated(this%x   )) deallocate(this%x   )
     if (allocated(this%y   )) deallocate(this%y   )
     if (allocated(this%p   )) deallocate(this%p   )
+    if (allocated(this%iA_p)) deallocate(this%iA_p)
     if (allocated(this%ic  )) deallocate(this%ic  )
     if (allocated(this%subs)) deallocate(this%subs)
 
