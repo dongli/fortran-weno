@@ -2,6 +2,6 @@ module weno
 
   ! This is the main entry of WENO modules.
 
-  use weno_types_mod
+  use weno_tensor_product_mod
 
 end module weno

@@ -1,4 +1,4 @@
-module weno_types_mod
+module weno_tensor_product_mod
 
   use poly_utils_mod
   use math_mod
@@ -366,4 +366,4 @@ contains
 
   end subroutine weno_tensor_product_final
 
-end module weno_types_mod
+end module weno_tensor_product_mod
