@@ -11,30 +11,32 @@ module weno_tensor_product_mod
 
   type weno_tensor_product_type
     logical :: initialized = .false.
-    integer :: id     = 0             ! Sub-stencil ID
-    integer :: nd     = 0             ! Dimension number
-    integer :: sw     = 0             ! Stencil width
-    integer :: sub_sw = 0             ! Sub-stencil width
-    integer :: nc     = 0             ! Number of cells
-    integer :: ns     = 0             ! Number of sub-stencils
-    integer :: npt    = 0             ! Number of evaluation points
-    integer :: di0    = 0
-    integer :: dj0    = 0
-    integer :: di     = 0
-    integer :: dj     = 0
-    integer , allocatable :: mask(:,:) ! Mask unavailable nodes by 0
-    real(8 ), allocatable :: x(:)      ! X coordinate of evaluation point
-    real(8 ), allocatable :: y(:)      ! Y coordinate of evaluation point
-    real(16), allocatable :: p(:,:)    ! Monomial terms on each evaluation point
-    real(16), allocatable :: iA_p(:,:) ! p * iA
-    real(16), allocatable :: ic(:,:)   ! Ideal coefficients for combining sub-stencils (only on stencil)
+    integer :: id     = 0                   ! Sub-stencil ID
+    integer :: nd     = 0                   ! Dimension number
+    integer :: sw     = 0                   ! Stencil width
+    integer :: sub_sw = 0                   ! Sub-stencil width
+    integer :: nc     = 0                   ! Number of cells
+    integer :: ns     = 0                   ! Number of sub-stencils
+    integer :: npt    = 0                   ! Number of evaluation points
+    integer :: di0    = 0                   ! Origin shift of sub-stencil relative to stencil
+    integer :: dj0    = 0                   ! Origin shift of sub-stencil relative to stencil
+    integer :: di     = 0                   ! Index shift of sub-stencil relative to stencil
+    integer :: dj     = 0                   ! Index shift of sub-stencil relative to stencil
+    integer , allocatable :: cell_mask(:,:) ! Mask unavailable cells by 0
+    integer , allocatable :: poly_mask(:,:) ! Mask unavailable polynomial terms by 0
+    real(8 ), allocatable :: x(:)           ! X coordinate of evaluation point
+    real(8 ), allocatable :: y(:)           ! Y coordinate of evaluation point
+    real(16), allocatable :: p(:,:)         ! Monomial terms on each evaluation point
+    real(16), allocatable :: iA_p(:,:)      ! iA * p
+    real(16), allocatable :: ic(:,:)        ! Ideal coefficients for combining sub-stencils (only on stencil)
     type(weno_tensor_product_type), allocatable :: subs(:) ! Sub-stencils
   contains
-    procedure :: init              => weno_tensor_product_init
-    procedure :: add_point         => weno_tensor_product_add_point
-    procedure :: calc_recon_matrix => weno_tensor_product_calc_recon_matrix
-    procedure :: calc_ideal_coefs  => weno_tensor_product_calc_ideal_coefs
-    procedure :: clear             => weno_tensor_product_clear
+    procedure :: init                  => weno_tensor_product_init
+    procedure :: add_point             => weno_tensor_product_add_point
+    procedure :: calc_recon_matrix     => weno_tensor_product_calc_recon_matrix
+    procedure :: calc_ideal_coefs      => weno_tensor_product_calc_ideal_coefs
+    procedure :: release_unused_memory => weno_tensor_product_release_unused_memory
+    procedure :: clear                 => weno_tensor_product_clear
     final :: weno_tensor_product_final
   end type weno_tensor_product_type
 
@@ -49,7 +51,7 @@ contains
     integer, intent(in), optional :: dj0
     integer, intent(in), optional :: di
     integer, intent(in), optional :: dj
-    integer, intent(in), optional :: mask(:,:)
+    integer, intent(in), optional :: mask(:,:) ! Cell mask
     integer, intent(in), optional :: id
     logical, intent(in), optional :: has_subs
 
@@ -61,7 +63,8 @@ contains
     this%nd = nd
     this%nc = sw**nd
 
-    allocate(this%mask(sw,sw**(nd-1)))
+    allocate(this%cell_mask(sw,sw**(nd-1)))
+    allocate(this%poly_mask(sw,sw**(nd-1)))
 
     if (present(id )) this%id  = id
     if (present(di0)) this%di0 = di0
@@ -70,9 +73,20 @@ contains
     if (present(dj )) this%dj  = dj
 
     if (present(mask)) then
-      this%mask = mask
+      this%cell_mask = mask
     else
-      this%mask = 1
+      this%cell_mask = 1
+    end if
+
+    ! Set polynomial mask from cell mask.
+    if (this%cell_mask(1,1) == 0) then
+      this%poly_mask = this%cell_mask(this%sw:1:-1,this%sw**(this%nd-1):1:-1)
+    else if (this%cell_mask(this%sw,1) == 0) then
+      this%poly_mask = this%cell_mask(:,this%sw**(this%nd-1):1:-1)
+    else if (this%cell_mask(1,this%sw**(this%nd-1)) == 0) then
+      this%poly_mask = this%cell_mask(this%sw:1:-1,:)
+    else
+      this%poly_mask = this%cell_mask
     end if
 
     ! Initialize sub-stencils.
@@ -88,8 +102,8 @@ contains
       do j = 1, this%sub_sw**(nd - 1)
         do i = 1, this%sub_sw
           call this%subs(k)%init(nd=nd, sw=this%sub_sw, di0=i-int(this%sw/2), dj0=j-int(this%sw/2), &
-                                 di=i-1, dj=j-1, id=k, has_subs=.false.)
-          this%subs(k)%mask = this%mask(i:i+this%sub_sw-1,j:j+this%sub_sw-1)
+                                 di=i-1, dj=j-1, id=k, has_subs=.false., &
+                                 mask=this%cell_mask(i:i+this%sub_sw-1,j:j+this%sub_sw**(nd-1)-1))
           k = k + 1
         end do
       end do
@@ -103,10 +117,10 @@ contains
 
     class(weno_tensor_product_type), intent(inout) :: this
     real(8), intent(in) :: x
-    real(8), intent(in) :: y
+    real(8), intent(in), optional :: y
 
     real(8), allocatable :: tmp(:)
-    integer i, j, k
+    integer i, k
 
     this%npt = this%npt + 1
 
@@ -118,13 +132,15 @@ contains
     if (allocated(this%x)) deallocate(this%x)
     allocate(this%x(this%npt))
     this%x = tmp
-    do i = 1, this%npt - 1
-      tmp(i) = this%y(i)
-    end do
-    tmp(this%npt) = y - this%dj0 ! Convert to local coordinate.
-    if (allocated(this%y)) deallocate(this%y)
-    allocate(this%y(this%npt))
-    this%y = tmp
+    if (present(y)) then ! 1D case does not has y.
+      do i = 1, this%npt - 1
+        tmp(i) = this%y(i)
+      end do
+      tmp(this%npt) = y - this%dj0 ! Convert to local coordinate.
+      if (allocated(this%y)) deallocate(this%y)
+      allocate(this%y(this%npt))
+      this%y = tmp
+    end if
     deallocate(tmp)
 
     if (allocated(this%subs)) then
@@ -142,79 +158,84 @@ contains
     integer, intent(out) :: ierr
 
     real(16), allocatable :: A(:,:), iA(:,:)
-    integer , allocatable :: kmap(:)
-    logical mirror_i, mirror_j
+    integer , allocatable :: idx_map(:)
     integer i, j, k, p, n
+
+    ierr = 0
 
     if (allocated(this%p   )) deallocate(this%p   )
     if (allocated(this%iA_p)) deallocate(this%iA_p)
     allocate(this%p   (this%nc,this%npt)); this%p    = 0
     allocate(this%iA_p(this%nc,this%npt)); this%iA_p = 0
 
-    allocate(kmap(this%nc)); kmap = 0
+    allocate(idx_map(this%nc)); idx_map = 0
 
-    if (this%mask(1,1) == 0) then
-      mirror_i = .true. ; mirror_j = .true.
-    else if (this%mask(this%sw,1) == 0) then
-      mirror_i = .false.; mirror_j = .true.
-    else if (this%mask(1,this%sw) == 0) then
-      mirror_i = .true. ; mirror_j = .false.
-    else
-      mirror_i = .false.; mirror_j = .false.
-    end if
+    ! Set index maps.
+    k = 1; n = 1
+    do j = 1, this%sw**(this%nd-1)
+      do i = 1, this%sw
+        if (this%cell_mask(i,j) == 1) then
+          idx_map(n) = k; k = k + 1
+        end if
+        n = n + 1
+      end do
+    end do
 
     ! Set the p for each evaluation point.
     ! Select monomials according to mask.
-    do p = 1, this%npt
-      k = 1; n = 1
-      do j = 1, this%sw
+    select case (this%nd)
+    case (1)
+      do p = 1, this%npt
+        k = 1
         do i = 1, this%sw
-          if (this%mask(merge(this%sw-i+1, i, mirror_i),merge(this%sw-j+1, j, mirror_j)) == 1) then
-            call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, this%p(k,p))
-            kmap(n) = k; k = k + 1
+          if (this%poly_mask(i,1) == 1) then
+            call calc_poly_tensor_product_monomial(this%x(p), i - 1, this%p(k,p))
+            k = k + 1
           end if
-          n = n + 1
         end do
       end do
-    end do
+    case (2)
+      do p = 1, this%npt
+        k = 1
+        do j = 1, this%sw**(this%nd-1)
+          do i = 1, this%sw
+            if (this%poly_mask(i,j) == 1) then
+              call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, this%p(k,p))
+              k = k + 1
+            end if
+          end do
+        end do
+      end do
+    end select
 
     ! Calculate inverse of integral coefficient matrix.
     allocate( A(this%nc,this%nc))
     allocate(iA(this%nc,this%nc))
-    call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, A, this%mask)
-    n = count(this%mask == 1)
+    select case (this%nd)
+    case (1)
+      call calc_poly_tensor_product_integral_coef_matrix(this%sw, A, this%cell_mask(:,1), this%poly_mask(:,1))
+    case (2)
+      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, A, this%cell_mask, this%poly_mask)
+    end select
+    n = count(this%cell_mask == 1)
     call inverse_matrix(A(1:n,1:n), iA(1:n,1:n), ierr)
-    ! Rearrange iA and p.
-    do n = this%nc, 1, -1
-      if (kmap(n) /= 0) then
-        iA(:,n) = iA(:,kmap(n))
-      else
-        iA(:,n) = 0
-      end if
-    end do
-    do n = this%nc, 1, -1
-      if (kmap(n) /= 0) then
-        iA(n,:) = iA(kmap(n),:)
-      else
-        iA(n,:) = 0
-      end if
-    end do
-    do n = this%nc, 1, -1
-      if (kmap(n) /= 0) then
-        this%p(n,:) = this%p(kmap(n),:)
-      else
-        this%p(n,:) = 0
-      end if
-    end do
     if (ierr /= 0) then
-      deallocate(A, iA, kmap)
+      deallocate(A, iA, idx_map)
       return
     end if
 
-    this%iA_p = matmul(iA, this%p)
-    ! Rearrange iA_p.
+    this%iA_p(1:n,:) = matmul(iA(1:n,1:n), this%p(1:n,:))
 
-    deallocate(A, iA, kmap)
+    ! Rearrange iA_p.
+    do n = this%nc, 1, -1
+      if (idx_map(n) /= 0) then
+        this%iA_p(n,:) = this%iA_p(idx_map(n),:)
+      else
+        this%iA_p(n,:) = 0
+      end if
+    end do
+
+    deallocate(A, iA, idx_map)
 
   end subroutine weno_tensor_product_calc_recon_matrix
 
@@ -225,6 +246,8 @@ contains
 
     real(16), allocatable, dimension(:,:) :: A, AtA, iAtA
     integer i, j, k, p, m, n
+
+    ierr = 0
 
     if (.not. allocated(this%subs)) then
       ierr = 1
@@ -245,9 +268,9 @@ contains
     allocate(iAtA(this%ns,this%ns))
     do p = 1, this%npt
       do k = 1, this%ns
-        do j = 1, this%sub_sw
+        do j = 1, this%sub_sw**(this%nd-1)
           do i = 1, this%sub_sw
-            if (this%subs(k)%mask(i,j) == 1) then
+            if (this%subs(k)%cell_mask(i,j) == 1) then
               m = (j + this%subs(k)%dj - 1) * this%sw     + i + (this%subs(k)%di)
               n = (j                   - 1) * this%sub_sw + i
               A(m,k) = this%subs(k)%iA_p(n,p)
@@ -260,9 +283,6 @@ contains
       if (ierr /= 0) return
       this%ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iA_p(:,p))
     end do
-    do i = 1, this%ns
-      write(*, '(F10.5)') this%ic(i,1)
-    end do
     if (abs(sum(matmul(A, this%ic(:,1)) - this%iA_p(:,1))) > 1.0e-30) then
       ierr = 3
     end if
@@ -270,25 +290,41 @@ contains
 
   end subroutine weno_tensor_product_calc_ideal_coefs
 
+  subroutine weno_tensor_product_release_unused_memory(this)
+
+    class(weno_tensor_product_type), intent(inout) :: this
+
+    if (allocated(this%poly_mask)) deallocate(this%poly_mask)
+    if (allocated(this%x        )) deallocate(this%x        )
+    if (allocated(this%y        )) deallocate(this%y        )
+    if (allocated(this%p        )) deallocate(this%p        )
+
+  end subroutine weno_tensor_product_release_unused_memory
+
   subroutine weno_tensor_product_clear(this)
 
     class(weno_tensor_product_type), intent(inout) :: this
 
-    this%sw  = 0
-    this%nd  = 0
-    this%nc  = 0
-    this%ns  = 0
-    this%npt = 0
-    this%di0 = 0
-    this%dj0 = 0
+    this%id     = 0
+    this%nd     = 0
+    this%sw     = 0
+    this%sub_sw = 0
+    this%nc     = 0
+    this%ns     = 0
+    this%npt    = 0
+    this%di0    = 0
+    this%dj0    = 0
+    this%di     = 0
+    this%dj     = 0
 
-    if (allocated(this%mask)) deallocate(this%mask)
-    if (allocated(this%x   )) deallocate(this%x   )
-    if (allocated(this%y   )) deallocate(this%y   )
-    if (allocated(this%p   )) deallocate(this%p   )
-    if (allocated(this%iA_p)) deallocate(this%iA_p)
-    if (allocated(this%ic  )) deallocate(this%ic  )
-    if (allocated(this%subs)) deallocate(this%subs)
+    if (allocated(this%cell_mask)) deallocate(this%cell_mask)
+    if (allocated(this%poly_mask)) deallocate(this%poly_mask)
+    if (allocated(this%x        )) deallocate(this%x        )
+    if (allocated(this%y        )) deallocate(this%y        )
+    if (allocated(this%p        )) deallocate(this%p        )
+    if (allocated(this%iA_p     )) deallocate(this%iA_p     )
+    if (allocated(this%ic       )) deallocate(this%ic       )
+    if (allocated(this%subs     )) deallocate(this%subs     )
 
     this%initialized = .false.
 
