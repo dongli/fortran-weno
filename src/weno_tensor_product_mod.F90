@@ -18,14 +18,17 @@ module weno_tensor_product_mod
     integer :: nc     = 0                  ! Number of cells
     integer :: ns     = 0                  ! Number of sub-stencils
     integer :: npt    = 0                  ! Number of evaluation points
-    integer :: di0    = 0                  ! Origin shift of sub-stencil relative to stencil
-    integer :: dj0    = 0                  ! Origin shift of sub-stencil relative to stencil
     integer :: di     = 0                  ! Index shift of sub-stencil relative to stencil
     integer :: dj     = 0                  ! Index shift of sub-stencil relative to stencil
     integer, allocatable :: cell_mask(:,:) ! Mask unavailable cells by 0
     integer, allocatable :: poly_mask(:,:) ! Mask unavailable polynomial terms by 0
+    real(8), allocatable :: xc       (:)   ! X coordinate of cell centroids
+    real(8), allocatable :: yc       (:)   ! Y coordinate of cell centroids
     real(8), allocatable :: x        (:)   ! X coordinate of evaluation point
     real(8), allocatable :: y        (:)   ! Y coordinate of evaluation point
+    real(8), allocatable :: a        (:)   ! Reconstruction coefficients
+    real(8), allocatable :: b        (:)   ! Smoothness indicators
+    real(8), allocatable :: p        (:,:) ! Polynomial terms on each evaluation point
     real(8), allocatable :: iA       (:,:) ! A * a = f, iA = inverse(A)
     real(8), allocatable :: iAp      (:,:) ! iA * p
     real(8), allocatable :: ic       (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
@@ -36,6 +39,8 @@ module weno_tensor_product_mod
     procedure :: add_point             => weno_tensor_product_add_point
     procedure :: calc_recon_matrix     => weno_tensor_product_calc_recon_matrix
     procedure :: calc_ideal_coefs      => weno_tensor_product_calc_ideal_coefs
+    procedure :: calc_smooth_indicator => weno_tensor_product_calc_smooth_indicator
+    procedure :: reconstruct           => weno_tensor_product_reconstruct
     procedure :: release_unused_memory => weno_tensor_product_release_unused_memory
     procedure :: clear                 => weno_tensor_product_clear
     final :: weno_tensor_product_final
@@ -43,20 +48,20 @@ module weno_tensor_product_mod
 
 contains
 
-  subroutine weno_tensor_product_init(this, nd, sw, di0, dj0, di, dj, mask, id, has_subs)
+  subroutine weno_tensor_product_init(this, nd, sw, xc, yc, di, dj, mask, id, has_subs)
 
     class(weno_tensor_product_type), intent(inout) :: this
     integer, intent(in) :: nd
     integer, intent(in) :: sw
-    integer, intent(in), optional :: di0
-    integer, intent(in), optional :: dj0
+    real(8), intent(in), optional :: xc(sw)
+    real(8), intent(in), optional :: yc(sw)
     integer, intent(in), optional :: di
     integer, intent(in), optional :: dj
     integer, intent(in), optional :: mask(:,:) ! Cell mask
     integer, intent(in), optional :: id
     logical, intent(in), optional :: has_subs
 
-    integer i, j, k
+    integer i, j, k, ie, je1, je2
 
     call this%clear()
 
@@ -64,14 +69,12 @@ contains
     this%nd = nd
     this%nc = sw**nd
 
-    allocate(this%cell_mask(sw,sw**(nd-1)))
-    allocate(this%poly_mask(sw,sw**(nd-1)))
-
     if (present(id )) this%id  = id
-    if (present(di0)) this%di0 = di0
-    if (present(dj0)) this%dj0 = dj0
     if (present(di )) this%di  = di
     if (present(dj )) this%dj  = dj
+
+    allocate(this%cell_mask(sw,sw**(nd-1)))
+    allocate(this%poly_mask(sw,sw**(nd-1)))
 
     if (present(mask)) then
       this%cell_mask = mask
@@ -90,24 +93,38 @@ contains
       this%poly_mask = this%cell_mask
     end if
 
+    allocate(this%xc(sw))
+    allocate(this%yc(sw))
+    if (present(xc) .and. present(yc)) then
+      this%xc = xc
+      this%yc = yc
+    else
+      do i = 1, sw
+        this%xc(i) = -int(sw / 2) + i - 1
+      end do
+      do j = 1, sw
+        this%yc(j) = -int(sw / 2) + j - 1
+      end do
+    end if
+
     ! Initialize sub-stencils.
     if (merge(has_subs, .true., present(has_subs))) then
-      ! Set sub-stencil size.
-      select case (sw)
-      case (5)
-        this%sub_sw = 3
-      end select
+      this%sub_sw = int((sw + 1) / 2) ! Set sub-stencil size.
       this%ns = this%sub_sw**nd
       allocate(this%subs(this%ns))
       k = 1
       do j = 1, this%sub_sw**(nd - 1)
         do i = 1, this%sub_sw
-          call this%subs(k)%init(nd=nd, sw=this%sub_sw, di0=i-int(this%sw/2), dj0=j-int(this%sw/2), &
-                                 di=i-1, dj=j-1, id=k, has_subs=.false., &
-                                 mask=this%cell_mask(i:i+this%sub_sw-1,j:j+this%sub_sw**(nd-1)-1))
+          ie  = i + this%sub_sw - 1
+          je1 = j + this%sub_sw - 1
+          je2 = j + this%sub_sw**(nd-1) - 1
+          call this%subs(k)%init(nd=nd, sw=this%sub_sw, xc=this%xc(i:ie), yc=this%yc(j:je1), &
+                                 di=i-1, dj=j-1, id=k, mask=this%cell_mask(i:ie,j:je2), has_subs=.false.)
           k = k + 1
         end do
       end do
+      allocate(this%a(this%ns))
+      allocate(this%b(this%ns))
     end if
 
     this%initialized = .true.
@@ -129,7 +146,7 @@ contains
     do i = 1, this%npt - 1
       tmp(i) = this%x(i)
     end do
-    tmp(this%npt) = x - this%di0 ! Convert to local coordinate.
+    tmp(this%npt) = x
     if (allocated(this%x)) deallocate(this%x)
     allocate(this%x(this%npt))
     this%x = tmp
@@ -137,7 +154,7 @@ contains
       do i = 1, this%npt - 1
         tmp(i) = this%y(i)
       end do
-      tmp(this%npt) = y - this%dj0 ! Convert to local coordinate.
+      tmp(this%npt) = y
       if (allocated(this%y)) deallocate(this%y)
       allocate(this%y(this%npt))
       this%y = tmp
@@ -165,14 +182,16 @@ contains
 
     ierr = 0
 
-    if (allocated(this%iA)) deallocate(this%iA)
-    allocate(this%iA(this%nc,this%nc))
-    if (allocated(this%iAp)) deallocate(this%iAp)
-    allocate(this%iAp(this%nc,this%npt))
+    if (allocated(this%p      )) deallocate(this%p      )
+    if (allocated(this%iA     )) deallocate(this%iA     )
+    if (allocated(this%iAp    )) deallocate(this%iAp    )
     if (allocated(this%iAp_r16)) deallocate(this%iAp_r16)
+
+    allocate(this%p      (this%nc,this%npt))
+    allocate(this%iA     (this%nc,this%nc))
+    allocate(this%iAp    (this%nc,this%npt))
     allocate(this%iAp_r16(this%nc,this%npt))
 
-    allocate(poly   (this%nc,this%npt)); poly = 0
     allocate( A     (this%nc,this%nc ))
     allocate(iA     (this%nc,this%nc ))
     allocate(idx_map(this%nc         )); idx_map = 0
@@ -196,7 +215,7 @@ contains
         k = 1
         do i = 1, this%sw
           if (this%poly_mask(i,1) == 1) then
-            call calc_poly_tensor_product_monomial(this%x(p), i - 1, poly(k,p))
+            call calc_poly_tensor_product_monomial(this%x(p), i - 1, this%p(k,p))
             k = k + 1
           end if
         end do
@@ -207,7 +226,7 @@ contains
         do j = 1, this%sw**(this%nd-1)
           do i = 1, this%sw
             if (this%poly_mask(i,j) == 1) then
-              call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, poly(k,p))
+              call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, this%p(k,p))
               k = k + 1
             end if
           end do
@@ -218,9 +237,9 @@ contains
     ! Calculate inverse of integral coefficient matrix.
     select case (this%nd)
     case (1)
-      call calc_poly_tensor_product_integral_coef_matrix(this%sw, A, this%cell_mask(:,1), this%poly_mask(:,1))
+      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%xc, A, this%cell_mask(:,1), this%poly_mask(:,1))
     case (2)
-      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, A, this%cell_mask, this%poly_mask)
+      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, this%xc, this%yc, A, this%cell_mask, this%poly_mask)
     end select
     n = count(this%cell_mask == 1)
     call inverse_matrix(A(1:n,1:n), iA(1:n,1:n), ierr)
@@ -229,7 +248,7 @@ contains
       return
     end if
 
-    this%iAp_r16(1:n,:) = matmul(iA(1:n,1:n), poly(1:n,:))
+    this%iAp_r16(1:n,:) = matmul(iA(1:n,1:n), this%p(1:n,:))
 
     ! Copy double double iA into double iA.
     this%iA = iA
@@ -247,7 +266,7 @@ contains
 
     this%iAp = this%iAp_r16
 
-    deallocate(poly, A, iA, idx_map)
+    deallocate(A, iA, idx_map)
 
   end subroutine weno_tensor_product_calc_recon_matrix
 
@@ -305,11 +324,55 @@ contains
 
   end subroutine weno_tensor_product_calc_ideal_coefs
 
+  subroutine weno_tensor_product_calc_smooth_indicator(this)
+
+    class(weno_tensor_product_type), intent(inout) :: this
+
+  end subroutine weno_tensor_product_calc_smooth_indicator
+
+  subroutine weno_tensor_product_reconstruct(this, fi, fo, ierr)
+
+    class(weno_tensor_product_type), intent(inout) :: this
+    real(8), intent(in ) :: fi(:,:) ! Cell averaged function values
+    real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
+    integer, intent(out) :: ierr
+
+    integer i, j, k
+
+    ierr = 0
+
+#ifndef NDEBUG
+    if (size(fi) /= this%nc) then
+      ierr = 1
+      return
+    end if
+    if (size(fo) /= this%npt) then
+      ierr = 1
+      return
+    end if
+#endif
+
+    k = 1
+    do j = 1, this%sub_sw**(this%nd-1)
+      do i = 1, this%sub_sw
+        this%subs(k)%a = matmul(this%subs(k)%iA, reshape(fi(i:i+this%sub_sw-1,j:j+this%sub_sw**(this%nd-1)-1), &
+                                                         [this%subs(k)%nc]))
+        k = k + 1
+      end do
+    end do
+    call this%calc_smooth_indicator()
+
+    fo = 0
+
+  end subroutine weno_tensor_product_reconstruct
+
   subroutine weno_tensor_product_release_unused_memory(this)
 
     class(weno_tensor_product_type), intent(inout) :: this
 
     if (allocated(this%poly_mask)) deallocate(this%poly_mask)
+    if (allocated(this%xc       )) deallocate(this%xc       )
+    if (allocated(this%yc       )) deallocate(this%yc       )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
     if (allocated(this%iAp_r16  )) deallocate(this%iAp_r16  )
@@ -327,15 +390,18 @@ contains
     this%nc     = 0
     this%ns     = 0
     this%npt    = 0
-    this%di0    = 0
-    this%dj0    = 0
     this%di     = 0
     this%dj     = 0
 
     if (allocated(this%cell_mask)) deallocate(this%cell_mask)
     if (allocated(this%poly_mask)) deallocate(this%poly_mask)
+    if (allocated(this%xc       )) deallocate(this%xc       )
+    if (allocated(this%yc       )) deallocate(this%yc       )
+    if (allocated(this%a        )) deallocate(this%a        )
+    if (allocated(this%b        )) deallocate(this%b        )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
+    if (allocated(this%p        )) deallocate(this%p        )
     if (allocated(this%iAp      )) deallocate(this%iAp      )
     if (allocated(this%iAp_r16  )) deallocate(this%iAp_r16  )
     if (allocated(this%ic       )) deallocate(this%ic       )
