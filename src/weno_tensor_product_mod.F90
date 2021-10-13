@@ -20,6 +20,7 @@ module weno_tensor_product_mod
     integer :: npt    = 0                  ! Number of evaluation points
     integer :: di     = 0                  ! Index shift of sub-stencil relative to stencil
     integer :: dj     = 0                  ! Index shift of sub-stencil relative to stencil
+    real(8) :: si     = 0                  ! Smoothness indicator
     integer, allocatable :: cell_mask(:,:) ! Mask unavailable cells by 0
     integer, allocatable :: poly_mask(:,:) ! Mask unavailable polynomial terms by 0
     real(8), allocatable :: xc       (:)   ! X coordinate of cell centroids
@@ -27,7 +28,6 @@ module weno_tensor_product_mod
     real(8), allocatable :: x        (:)   ! X coordinate of evaluation point
     real(8), allocatable :: y        (:)   ! Y coordinate of evaluation point
     real(8), allocatable :: a        (:)   ! Reconstruction coefficients
-    real(8), allocatable :: b        (:)   ! Smoothness indicators
     real(8), allocatable :: p        (:,:) ! Polynomial terms on each evaluation point
     real(8), allocatable :: iA       (:,:) ! A * a = f, iA = inverse(A)
     real(8), allocatable :: iAp      (:,:) ! iA * p
@@ -43,6 +43,8 @@ module weno_tensor_product_mod
     procedure :: reconstruct           => weno_tensor_product_reconstruct
     procedure :: release_unused_memory => weno_tensor_product_release_unused_memory
     procedure :: clear                 => weno_tensor_product_clear
+    procedure, private :: weno_tensor_product_assign
+    generic :: assignment(=) => weno_tensor_product_assign
     final :: weno_tensor_product_final
   end type weno_tensor_product_type
 
@@ -99,6 +101,7 @@ contains
       this%xc = xc
       this%yc = yc
     else
+      ! Set coordinates of cells on the large stencil with origin at center.
       do i = 1, sw
         this%xc(i) = -int(sw / 2) + i - 1
       end do
@@ -124,7 +127,6 @@ contains
         end do
       end do
       allocate(this%a(this%ns))
-      allocate(this%b(this%ns))
     end if
 
     this%initialized = .true.
@@ -176,7 +178,7 @@ contains
     integer, intent(out) :: ierr
 
     ! Local double double arrays for preserving precision.
-    real(16), allocatable, dimension(:,:) :: poly, A, iA
+    real(16), allocatable, dimension(:,:) :: A, iA
     integer , allocatable :: idx_map(:)
     integer i, j, k, p, n
 
@@ -223,7 +225,7 @@ contains
     case (2)
       do p = 1, this%npt
         k = 1
-        do j = 1, this%sw**(this%nd-1)
+        do j = 1, this%sw
           do i = 1, this%sw
             if (this%poly_mask(i,j) == 1) then
               call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, this%p(k,p))
@@ -243,6 +245,7 @@ contains
     end select
     n = count(this%cell_mask == 1)
     call inverse_matrix(A(1:n,1:n), iA(1:n,1:n), ierr)
+
     if (ierr /= 0) then
       deallocate(A, iA, idx_map)
       return
@@ -316,10 +319,12 @@ contains
       if (ierr /= 0) return
       ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iAp_r16(:,p))
     end do
-    if (abs(sum(matmul(A, ic(:,1)) - this%iAp_r16(:,1))) > 1.0e-30) then
+    if (abs(sum(matmul(A, ic(:,1)) - this%iAp_r16(:,1))) > 1.0e-15) then
       ierr = 3
+      this%ic = 0
+    else
+      this%ic = ic
     end if
-    this%ic = ic
     deallocate(A, AtA, iAtA, ic)
 
   end subroutine weno_tensor_product_calc_ideal_coefs
@@ -327,6 +332,20 @@ contains
   subroutine weno_tensor_product_calc_smooth_indicator(this)
 
     class(weno_tensor_product_type), intent(inout) :: this
+
+    associate (a => this%a)
+    select case (this%nd)
+    case (1)
+    case (2)
+      select case (this%sw)
+      case (3)
+        this%si = (  720 * a(2) * a(2) + 3120 * a(3) * a(3) + 720  * a(4) * a(4) + 840   * a(5) * a(5) &
+                  +  120 * a(4) * a(6) + 3389 * a(6) * a(6) + 3120 * a(7) * a(7) + 120   * a(2) * a(8) &
+                  + 3389 * a(8) * a(8) + 520  * a(3) * a(9) + 520  * a(7) * a(9) + 13598 * a(9) * a(9) ) / 720
+      case (4)
+      end select
+    end select
+    end associate
 
   end subroutine weno_tensor_product_calc_smooth_indicator
 
@@ -337,7 +356,7 @@ contains
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
 
-    integer i, j, k
+    integer i, j, k, ie, je
 
     ierr = 0
 
@@ -354,13 +373,14 @@ contains
 
     k = 1
     do j = 1, this%sub_sw**(this%nd-1)
+      je = j + this%sub_sw**(this%nd - 1) - 1
       do i = 1, this%sub_sw
-        this%subs(k)%a = matmul(this%subs(k)%iA, reshape(fi(i:i+this%sub_sw-1,j:j+this%sub_sw**(this%nd-1)-1), &
-                                                         [this%subs(k)%nc]))
+        ie = i + this%sub_sw - 1
+        this%subs(k)%a = matmul(this%subs(k)%iA, reshape(fi(i:ie,j:je), [this%subs(k)%nc]))
+        call this%calc_smooth_indicator()
         k = k + 1
       end do
     end do
-    call this%calc_smooth_indicator()
 
     fo = 0
 
@@ -370,12 +390,40 @@ contains
 
     class(weno_tensor_product_type), intent(inout) :: this
 
+    type(weno_tensor_product_type), allocatable :: subs(:)
+    real(8), allocatable :: ic(:,:)
+    integer i, k, ns
+
     if (allocated(this%poly_mask)) deallocate(this%poly_mask)
     if (allocated(this%xc       )) deallocate(this%xc       )
     if (allocated(this%yc       )) deallocate(this%yc       )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
     if (allocated(this%iAp_r16  )) deallocate(this%iAp_r16  )
+
+    ! Shrink subs and ic arrays to only contain unmasked sub-stencils.
+    ns = this%ns
+    do k = 1, this%ns
+      if (any(this%subs(k)%cell_mask == 0)) ns = ns - 1
+    end do
+    if (ns < this%ns) then
+      allocate(subs(ns), ic(ns,this%npt))
+      i = 1
+      do k = 1, this%ns
+        if (any(this%subs(k)%cell_mask == 0)) cycle
+        subs(i) = this%subs(k)
+        ic(i,:) = this%ic(k,:)
+        i = i + 1
+      end do
+      deallocate(this%subs, this%ic)
+      this%ns = ns
+      allocate(this%subs(ns), this%ic(ns,this%npt))
+      do k = 1, this%ns
+        this%subs(k) = subs(k)
+        this%ic(k,:) = ic(k,:)
+      end do
+      deallocate(subs, ic)
+    end if
 
   end subroutine weno_tensor_product_release_unused_memory
 
@@ -398,7 +446,6 @@ contains
     if (allocated(this%xc       )) deallocate(this%xc       )
     if (allocated(this%yc       )) deallocate(this%yc       )
     if (allocated(this%a        )) deallocate(this%a        )
-    if (allocated(this%b        )) deallocate(this%b        )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
     if (allocated(this%p        )) deallocate(this%p        )
@@ -410,6 +457,33 @@ contains
     this%initialized = .false.
 
   end subroutine weno_tensor_product_clear
+
+  subroutine weno_tensor_product_assign(this, other)
+
+    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_tensor_product_type), intent(in) :: other
+
+    call this%clear()
+
+    this%id     = other%id
+    this%nd     = other%nd
+    this%sw     = other%sw
+    this%sub_sw = other%sub_sw
+    this%nc     = other%nc
+    this%ns     = other%ns
+    this%npt    = other%npt
+    this%di     = other%di
+    this%dj     = other%dj
+
+    allocate(this%p  (this%nc,this%npt))
+    allocate(this%iAp(this%nc,this%npt))
+
+    this%p   = other%p
+    this%iAp = other%iAp
+
+    this%initialized = .true.
+
+  end subroutine weno_tensor_product_assign
 
   subroutine weno_tensor_product_final(this)
 
