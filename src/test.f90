@@ -9,88 +9,91 @@ program test
   integer mask_5x5(5,5)
   integer mask_7x7(7,7)
 
+  call test_poly_1d(5)
+  stop
+
   mask_7x7 = 1
-  call test_2d(mask_7x7, 1)
+  call test_weno_2d(mask_7x7, 1)
 
   mask_3x3 = 1
-  call test_2d(mask_3x3, 1)
+  call test_weno_2d(mask_3x3, 1)
 
   mask_5x5 = 1
-  call test_2d(mask_5x5, 1)
+  call test_weno_2d(mask_5x5, 1)
 
   mask_5x5 = 1
   mask_5x5(5,5) = 0
-  call test_2d(mask_5x5, 1)
+  call test_weno_2d(mask_5x5, 1)
 
   mask_5x5 = 1
   mask_5x5(1,1) = 0
-  call test_2d(mask_5x5, 2)
+  call test_weno_2d(mask_5x5, 2)
 
   mask_5x5 = 1
   mask_5x5(5,5) = 0; mask_5x5(4,5) = 0
-  call test_2d(mask_5x5, 1)
+  call test_weno_2d(mask_5x5, 1)
 
   mask_5x5 = 1
   mask_5x5(1,1) = 0; mask_5x5(2,1) = 0
-  call test_2d(mask_5x5, 2)
+  call test_weno_2d(mask_5x5, 2)
 
   mask_5x5 = 1
   mask_5x5(5,5) = 0; mask_5x5(5,4) = 0
-  call test_2d(mask_5x5, 1)
+  call test_weno_2d(mask_5x5, 1)
 
   mask_5x5 = 1
   mask_5x5(1,1) = 0; mask_5x5(1,2) = 0
-  call test_2d(mask_5x5, 2)
+  call test_weno_2d(mask_5x5, 2)
 
   mask_5x5 = 1
   mask_5x5(5,5) = 0; mask_5x5(4,5) = 0; mask_5x5(5,4) = 0; mask_5x5(4,4) = 0
-  call test_2d(mask_5x5, 1)
+  call test_weno_2d(mask_5x5, 1)
 
   mask_5x5 = 1
   mask_5x5(1,1) = 0; mask_5x5(1,2) = 0; mask_5x5(2,1) = 0; mask_5x5(2,2) = 0
-  call test_2d(mask_5x5, 2)
+  call test_weno_2d(mask_5x5, 2)
 
   mask_5x5 = 1
   mask_5x5(5,1) = 0; mask_5x5(5,2) = 0; mask_5x5(4,1) = 0; mask_5x5(4,2) = 0
-  call test_2d(mask_5x5, 1)
+  call test_weno_2d(mask_5x5, 1)
 
   mask_5x5 = 1
   mask_5x5(1,5) = 0; mask_5x5(2,5) = 0; mask_5x5(1,4) = 0; mask_5x5(2,4) = 0
-  call test_2d(mask_5x5, 2)
+  call test_weno_2d(mask_5x5, 2)
 
   mask_5 = 1
-  call test_1d(mask_5, 1)
+  call test_weno_1d(mask_5, 1)
 
   mask_5 = 1
-  call test_1d(mask_5, 2)
-
-  mask_5 = 1
-  mask_5(5,1) = 0
-  call test_1d(mask_5, 2)
-
-  mask_5 = 1
-  mask_5(1,1) = 0
-  call test_1d(mask_5, 1)
+  call test_weno_1d(mask_5, 2)
 
   mask_5 = 1
   mask_5(5,1) = 0
-  call test_1d(mask_5, 1)
+  call test_weno_1d(mask_5, 2)
 
   mask_5 = 1
   mask_5(1,1) = 0
-  call test_1d(mask_5, 2)
+  call test_weno_1d(mask_5, 1)
+
+  mask_5 = 1
+  mask_5(5,1) = 0
+  call test_weno_1d(mask_5, 1)
+
+  mask_5 = 1
+  mask_5(1,1) = 0
+  call test_weno_1d(mask_5, 2)
 
   mask_5 = 1
   mask_5(1,1) = 0; mask_5(2,1) = 0
-  call test_1d(mask_5, 2)
+  call test_weno_1d(mask_5, 2)
 
   mask_5 = 1
   mask_5(5,1) = 0; mask_5(4,1) = 0
-  call test_1d(mask_5, 1)
+  call test_weno_1d(mask_5, 1)
 
 contains
 
-  subroutine test_1d(mask, check_point_idx)
+  subroutine test_weno_1d(mask, check_point_idx)
 
     integer, intent(in) :: mask(:,:)
     integer, intent(in) :: check_point_idx
@@ -139,9 +142,9 @@ contains
 
     deallocate(weno1d)
 
-  end subroutine test_1d
+  end subroutine test_weno_1d
 
-  subroutine test_2d(mask, check_point_idx)
+  subroutine test_weno_2d(mask, check_point_idx)
 
     integer, intent(in) :: mask(:,:)
     integer, intent(in) :: check_point_idx
@@ -191,7 +194,6 @@ contains
     end select
     call weno2d%calc_ideal_coefs(ierr)
     if (ierr /= 0) then
-      print *, ierr
       write(*, *) 'Failed to calculate WENO ideal coefficients!'
       write(*, *)
       return
@@ -217,6 +219,66 @@ contains
 
     deallocate(weno2d)
 
-  end subroutine test_2d
+  end subroutine test_weno_2d
+
+  subroutine test_poly_1d(sw)
+
+    integer, intent(in) :: sw
+
+    type(poly_tensor_product_type), allocatable :: poly1d
+    real(8) dx, fi(sw), fo(20)
+    integer i, ierr
+
+    allocate(poly1d)
+
+    call poly1d%init(nd=1, sw=sw)
+    dx = dble(sw) / (size(fo) - 1)
+    do i = 1, size(fo)
+      call poly1d%add_point(x=-sw/2.0d0+(i-1)*dx)
+    end do
+    call poly1d%calc_recon_matrix(ierr)
+    if (ierr /= 0) then
+      write(*, *) 'Failed to calculate polynomial coefficients!'
+      return
+    end if
+
+    fi = 0
+    fi(1:int(sw/2)) = 1
+
+    call poly1d%reconstruct(fi, fo, ierr)
+
+    do i = 1, size(fo)
+      print *, i, fo(i)
+    end do
+
+    deallocate(poly1d)
+
+  end subroutine test_poly_1d
+
+  subroutine test_poly_2d(sw)
+
+    integer, intent(in) :: sw
+
+    type(poly_tensor_product_type), allocatable :: poly2d
+    integer ierr
+
+    allocate(poly2d)
+
+    call poly2d%init(nd=2, sw=sw)
+    call poly2d%add_point(x=-0.5d0, y=0.0d0)
+    call poly2d%add_point(x=-sw/2.0d0, y=-sw/2.0d0)
+    call poly2d%calc_recon_matrix(ierr)
+    if (ierr /= 0) then
+      print *, ierr
+      write(*, *) 'Failed to calculate polynomial coefficients!'
+      write(*, *)
+      return
+    end if
+
+    call poly2d%release_unused_memory()
+
+    deallocate(poly2d)
+
+  end subroutine test_poly_2d
 
 end program test

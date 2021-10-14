@@ -201,7 +201,7 @@ contains
 
     allocate(this%p      (this%nc,this%npt))
     allocate(this%iA     (this%nc,this%nc))
-    allocate(this%iAp    (this%nc,this%npt))
+    allocate(this%iAp    (this%npt,this%nc))
     allocate(this%iAp_r16(this%nc,this%npt))
 
     allocate( A     (this%nc,this%nc ))
@@ -277,7 +277,7 @@ contains
       end if
     end do
 
-    this%iAp = this%iAp_r16
+    this%iAp = transpose(this%iAp_r16)
 
     deallocate(A, iA, idx_map)
 
@@ -440,7 +440,6 @@ contains
         if (any(this%subs(k)%cell_mask == 0)) cycle
         subs(i) = this%subs(k)
         ic(i,:) = this%ic(k,:)
-        !print *, k, i, ic(i,:)
         i = i + 1
       end do
       deallocate(this%subs, this%ic)
@@ -449,10 +448,8 @@ contains
       do k = 1, this%ns
         this%subs(k) = subs(k)
         this%ic(k,:) = ic(k,:)
-        !print *, k, ic(k,:)
       end do
       deallocate(subs, ic)
-      !stop
     end if
 
   end subroutine weno_tensor_product_release_unused_memory
