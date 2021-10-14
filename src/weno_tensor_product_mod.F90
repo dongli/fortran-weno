@@ -18,8 +18,10 @@ module weno_tensor_product_mod
     integer :: nc     = 0                  ! Number of cells
     integer :: ns     = 0                  ! Number of sub-stencils
     integer :: npt    = 0                  ! Number of evaluation points
-    integer :: di     = 0                  ! Index shift of sub-stencil relative to stencil
-    integer :: dj     = 0                  ! Index shift of sub-stencil relative to stencil
+    integer :: is     = 0                  ! Start index of subarray
+    integer :: ie     = 0                  ! End index of subarray
+    integer :: js     = 0                  ! Start index of subarray
+    integer :: je     = 0                  ! End index of subarray
     real(8) :: si     = 0                  ! Smoothness indicator
     integer, allocatable :: cell_mask(:,:) ! Mask unavailable cells by 0
     integer, allocatable :: poly_mask(:,:) ! Mask unavailable polynomial terms by 0
@@ -50,20 +52,22 @@ module weno_tensor_product_mod
 
 contains
 
-  subroutine weno_tensor_product_init(this, nd, sw, xc, yc, di, dj, mask, id, has_subs)
+  subroutine weno_tensor_product_init(this, nd, sw, xc, yc, is, ie, js, je, mask, id, has_subs)
 
     class(weno_tensor_product_type), intent(inout) :: this
     integer, intent(in) :: nd
     integer, intent(in) :: sw
     real(8), intent(in), optional :: xc(sw)
     real(8), intent(in), optional :: yc(sw)
-    integer, intent(in), optional :: di
-    integer, intent(in), optional :: dj
+    integer, intent(in), optional :: is
+    integer, intent(in), optional :: ie
+    integer, intent(in), optional :: js
+    integer, intent(in), optional :: je
     integer, intent(in), optional :: mask(:,:) ! Cell mask
     integer, intent(in), optional :: id
     logical, intent(in), optional :: has_subs
 
-    integer i, j, k, ie, je1, je2
+    integer i, j, k, sub_ie, sub_je1, sub_je2
 
     call this%clear()
 
@@ -72,11 +76,16 @@ contains
     this%nc = sw**nd
 
     if (present(id )) this%id  = id
-    if (present(di )) this%di  = di
-    if (present(dj )) this%dj  = dj
+
+    if (present(is) .and. present(ie) .and. present(js) .and. present(je)) then
+      this%is = is; this%ie = ie; this%js = js; this%je = je
+    else
+      this%is =  1; this%ie = sw; this%js =  1; this%je = sw
+    end if
 
     allocate(this%cell_mask(sw,sw**(nd-1)))
     allocate(this%poly_mask(sw,sw**(nd-1)))
+    allocate(this%a(this%nc))
 
     if (present(mask)) then
       this%cell_mask = mask
@@ -118,15 +127,15 @@ contains
       k = 1
       do j = 1, this%sub_sw**(nd - 1)
         do i = 1, this%sub_sw
-          ie  = i + this%sub_sw - 1
-          je1 = j + this%sub_sw - 1
-          je2 = j + this%sub_sw**(nd-1) - 1
-          call this%subs(k)%init(nd=nd, sw=this%sub_sw, xc=this%xc(i:ie), yc=this%yc(j:je1), &
-                                 di=i-1, dj=j-1, id=k, mask=this%cell_mask(i:ie,j:je2), has_subs=.false.)
+          sub_ie  = i + this%sub_sw - 1
+          sub_je1 = j + this%sub_sw - 1
+          sub_je2 = j + this%sub_sw**(nd-1) - 1
+          call this%subs(k)%init(nd=nd, sw=this%sub_sw, xc=this%xc(i:sub_ie), yc=this%yc(j:sub_je1), &
+                                 is=i, ie=sub_ie, js=j, je=sub_je1, id=k, has_subs=.false., &
+                                 mask=this%cell_mask(i:sub_ie,j:sub_je2))
           k = k + 1
         end do
       end do
-      allocate(this%a(this%ns))
     end if
 
     this%initialized = .true.
@@ -307,8 +316,8 @@ contains
         do j = 1, this%sub_sw**(this%nd-1)
           do i = 1, this%sub_sw
             if (this%subs(k)%cell_mask(i,j) == 1) then
-              m = (j + this%subs(k)%dj - 1) * this%sw     + i + (this%subs(k)%di)
-              n = (j                   - 1) * this%sub_sw + i
+              m = (j + this%subs(k)%js - 1 - 1) * this%sw     + i + (this%subs(k)%is - 1)
+              n = (j                       - 1) * this%sub_sw + i
               A(m,k) = this%subs(k)%iAp_r16(n,p)
             end if
           end do
@@ -318,6 +327,10 @@ contains
       call inverse_matrix(AtA, iAtA, ierr)
       if (ierr /= 0) return
       ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iAp_r16(:,p))
+      ! Set near-zero values to zero exactly.
+      do k = 1, this%ns
+        if (abs(ic(k,p)) < 1.0e-15) ic(k,p) = 0
+      end do
     end do
     if (abs(sum(matmul(A, ic(:,1)) - this%iAp_r16(:,1))) > 1.0e-15) then
       ierr = 3
@@ -356,7 +369,12 @@ contains
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
 
-    integer i, j, k, ie, je
+    integer k, p
+    real(8), parameter :: theta = 3
+    real(8), parameter :: eps = 1.0d-6
+    real(8) fs(this%ns,this%npt)
+    real(8) ic_p(this%ns), sc_p, w_p(this%ns)
+    real(8) ic_n(this%ns), sc_n, w_n(this%ns)
 
     ierr = 0
 
@@ -371,18 +389,24 @@ contains
     end if
 #endif
 
-    k = 1
-    do j = 1, this%sub_sw**(this%nd-1)
-      je = j + this%sub_sw**(this%nd - 1) - 1
-      do i = 1, this%sub_sw
-        ie = i + this%sub_sw - 1
-        this%subs(k)%a = matmul(this%subs(k)%iA, reshape(fi(i:ie,j:je), [this%subs(k)%nc]))
-        call this%calc_smooth_indicator()
-        k = k + 1
-      end do
+    ! Calculate point values from each available sub-stencils and smoothness
+    ! indicators for those sub-stencils.
+    do k = 1, this%ns
+      this%subs(k)%a = matmul(this%subs(k)%iA, pack(fi(this%is:this%ie,this%js:this%je), .true.))
+      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%p)
+      call this%subs(k)%calc_smooth_indicator()
     end do
 
-    fo = 0
+    do p = 1, this%npt
+      ! Handle negative ideal coefficients by splitting method (Shi et al., 2002).
+      ic_p = (this%ic(:,p) + theta * abs(this%ic(:,p))) / 2.0d0 ! Positive part
+      ic_n = ic_p - this%ic(:,p)                                ! Negative part
+      sc_p = sum(ic_p); ic_p = ic_p / sc_p
+      sc_n = sum(ic_n); ic_n = ic_n / sc_n
+      w_p = ic_p / (eps + this%subs(:)%si)**2
+      w_n = ic_n / (eps + this%subs(:)%si)**2
+      fo(p) = sc_p * sum(w_p * fs(:,p)) + sc_n * sum(w_n * fs(:,p))
+    end do
 
   end subroutine weno_tensor_product_reconstruct
 
@@ -413,6 +437,7 @@ contains
         if (any(this%subs(k)%cell_mask == 0)) cycle
         subs(i) = this%subs(k)
         ic(i,:) = this%ic(k,:)
+        !print *, k, i, ic(i,:)
         i = i + 1
       end do
       deallocate(this%subs, this%ic)
@@ -421,8 +446,10 @@ contains
       do k = 1, this%ns
         this%subs(k) = subs(k)
         this%ic(k,:) = ic(k,:)
+        !print *, k, ic(k,:)
       end do
       deallocate(subs, ic)
+      !stop
     end if
 
   end subroutine weno_tensor_product_release_unused_memory
@@ -438,8 +465,10 @@ contains
     this%nc     = 0
     this%ns     = 0
     this%npt    = 0
-    this%di     = 0
-    this%dj     = 0
+    this%is     = 0
+    this%ie     = 0
+    this%js     = 0
+    this%je     = 0
 
     if (allocated(this%cell_mask)) deallocate(this%cell_mask)
     if (allocated(this%poly_mask)) deallocate(this%poly_mask)
@@ -449,6 +478,7 @@ contains
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
     if (allocated(this%p        )) deallocate(this%p        )
+    if (allocated(this%iA       )) deallocate(this%iA       )
     if (allocated(this%iAp      )) deallocate(this%iAp      )
     if (allocated(this%iAp_r16  )) deallocate(this%iAp_r16  )
     if (allocated(this%ic       )) deallocate(this%ic       )
@@ -472,14 +502,21 @@ contains
     this%nc     = other%nc
     this%ns     = other%ns
     this%npt    = other%npt
-    this%di     = other%di
-    this%dj     = other%dj
+    this%is     = other%is
+    this%ie     = other%ie
+    this%js     = other%js
+    this%je     = other%je
 
+    allocate(this%cell_mask(this%sw,this%sw**(this%nd-1)))
+    allocate(this%a  (this%nc))
     allocate(this%p  (this%nc,this%npt))
+    allocate(this%iA (this%nc,this%nc))
     allocate(this%iAp(this%nc,this%npt))
 
-    this%p   = other%p
-    this%iAp = other%iAp
+    this%cell_mask = other%cell_mask
+    this%p         = other%p
+    this%iA        = other%iA
+    this%iAp       = other%iAp
 
     this%initialized = .true.
 
