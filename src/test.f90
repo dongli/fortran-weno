@@ -113,7 +113,7 @@ contains
     ! |     |     x i0  x     |     |
     ! |_____|_____|_____|_____|_____|
 
-    call weno1d%init(nd=1, sw=sw, mask=mask)
+    call weno1d%init(nd=1, sw=sw, is=-int(sw/2), ie=int(sw/2), mask=mask)
     call weno1d%add_point(x=-0.5d0)
     call weno1d%add_point(x= 0.5d0)
     call weno1d%calc_ideal_coefs(ierr)
@@ -179,7 +179,7 @@ contains
     ! |     |     |     |     |     |
     ! |_____|_____|_____|_____|_____|
 
-    call weno2d%init(nd=2, sw=sw, mask=mask)
+    call weno2d%init(nd=2, sw=sw, is=-int(sw/2), ie=int(sw/2), js=-int(sw/2), je=int(sw/2), mask=mask)
     select case (sw)
     case (3, 7)
       call weno2d%add_point(x=-0.5d0, y= 0.001d0)

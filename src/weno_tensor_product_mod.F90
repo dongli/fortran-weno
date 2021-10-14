@@ -67,7 +67,7 @@ contains
     integer, intent(in), optional :: id
     logical, intent(in), optional :: has_subs
 
-    integer i, j, k, sub_ie, sub_je1, sub_je2
+    integer i, j, k, sub_ie, sub_je
 
     call this%clear()
 
@@ -75,15 +75,17 @@ contains
     this%nd = nd
     this%nc = sw**nd
 
-    if (present(id )) this%id  = id
+    if (present(id)) this%id = id
 
     if (present(is) .and. present(ie) .and. present(js) .and. present(je)) then
       this%is = is; this%ie = ie; this%js = js; this%je = je
+    else if (present(is) .and. present(ie)) then
+      this%is = is; this%ie = ie; this%js =  1; this%je = sw**(nd-1)
     else
-      this%is =  1; this%ie = sw; this%js =  1; this%je = sw
+      this%is =  1; this%ie = sw; this%js =  1; this%je = sw**(nd-1)
     end if
 
-    allocate(this%cell_mask(sw,sw**(nd-1)))
+    allocate(this%cell_mask(this%is:this%ie,this%js:this%je))
     allocate(this%poly_mask(sw,sw**(nd-1)))
     allocate(this%a(this%nc))
 
@@ -94,27 +96,27 @@ contains
     end if
 
     ! Set polynomial mask from cell mask.
-    if (this%cell_mask(1,1) == 0) then
-      this%poly_mask = this%cell_mask(this%sw:1:-1,this%sw**(this%nd-1):1:-1)
-    else if (this%cell_mask(this%sw,1) == 0) then
-      this%poly_mask = this%cell_mask(:,this%sw**(this%nd-1):1:-1)
-    else if (this%cell_mask(1,this%sw**(this%nd-1)) == 0) then
-      this%poly_mask = this%cell_mask(this%sw:1:-1,:)
+    if (this%cell_mask(this%is,this%js) == 0) then
+      this%poly_mask = this%cell_mask(this%ie:this%is:-1,this%je:this%js:-1)
+    else if (this%cell_mask(this%ie,this%js) == 0) then
+      this%poly_mask = this%cell_mask(:,this%je:this%js:-1)
+    else if (this%cell_mask(this%is,this%je) == 0) then
+      this%poly_mask = this%cell_mask(this%ie:this%is:-1,:)
     else
       this%poly_mask = this%cell_mask
     end if
 
-    allocate(this%xc(sw))
-    allocate(this%yc(sw))
+    allocate(this%xc(this%is:this%ie))
+    allocate(this%yc(this%js:this%je))
     if (present(xc) .and. present(yc)) then
       this%xc = xc
       this%yc = yc
     else
       ! Set coordinates of cells on the large stencil with origin at center.
-      do i = 1, sw
+      do i = this%is, this%ie
         this%xc(i) = -int(sw / 2) + i - 1
       end do
-      do j = 1, sw
+      do j = this%js, this%je
         this%yc(j) = -int(sw / 2) + j - 1
       end do
     end if
@@ -125,14 +127,13 @@ contains
       this%ns = this%sub_sw**nd
       allocate(this%subs(this%ns))
       k = 1
-      do j = 1, this%sub_sw**(nd - 1)
-        do i = 1, this%sub_sw
-          sub_ie  = i + this%sub_sw - 1
-          sub_je1 = j + this%sub_sw - 1
-          sub_je2 = j + this%sub_sw**(nd-1) - 1
-          call this%subs(k)%init(nd=nd, sw=this%sub_sw, xc=this%xc(i:sub_ie), yc=this%yc(j:sub_je1), &
-                                 is=i, ie=sub_ie, js=j, je=sub_je1, id=k, has_subs=.false., &
-                                 mask=this%cell_mask(i:sub_ie,j:sub_je2))
+      do j = this%js, this%js + this%sub_sw**(nd - 1) - 1
+        do i = this%is, this%is + this%sub_sw - 1
+          sub_ie = i + this%sub_sw - 1
+          sub_je = j + this%sub_sw**(nd-1) - 1
+          call this%subs(k)%init(nd=nd, sw=this%sub_sw, xc=this%xc(i:sub_ie), yc=this%yc(j:sub_je), &
+                                 is=i, ie=sub_ie, js=j, je=sub_je, id=k, has_subs=.false., &
+                                 mask=this%cell_mask(i:sub_ie,j:sub_je))
           k = k + 1
         end do
       end do
@@ -209,8 +210,8 @@ contains
 
     ! Set index maps.
     k = 1; n = 1
-    do j = 1, this%sw**(this%nd-1)
-      do i = 1, this%sw
+    do j = this%js, this%je
+      do i = this%is, this%ie
         if (this%cell_mask(i,j) == 1) then
           idx_map(n) = k; k = k + 1
         end if
@@ -289,7 +290,7 @@ contains
 
     ! Local double double arrays for preserving precision.
     real(16), allocatable, dimension(:,:) :: A, AtA, iAtA, ic
-    integer i, j, k, p, m, n
+    integer i, j, k, p, m, n, di, dj
 
     ierr = 0
 
@@ -313,11 +314,13 @@ contains
     allocate(  ic(this%ns,this%npt)); ic = 0
     do p = 1, this%npt
       do k = 1, this%ns
+        di = this%subs(k)%is - this%is
+        dj = this%subs(k)%js - this%js
         do j = 1, this%sub_sw**(this%nd-1)
           do i = 1, this%sub_sw
-            if (this%subs(k)%cell_mask(i,j) == 1) then
-              m = (j + this%subs(k)%js - 1 - 1) * this%sw     + i + (this%subs(k)%is - 1)
-              n = (j                       - 1) * this%sub_sw + i
+            if (this%subs(k)%cell_mask(this%subs(k)%is+i-1,this%subs(k)%js+j-1) == 1) then
+              m = (j + dj - 1) * this%sw     + i + di
+              n = (j      - 1) * this%sub_sw + i
               A(m,k) = this%subs(k)%iAp_r16(n,p)
             end if
           end do
