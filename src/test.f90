@@ -4,13 +4,17 @@ program test
 
   implicit none
 
+  real(8), parameter :: pi = 4.0d0 * atan(1.0d0)
+
   integer mask_5(5,1)
   integer mask_3x3(3,3)
   integer mask_5x5(5,5)
   integer mask_7x7(7,7)
 
+  mask_5 = 1
+  call test_weno_1d(mask_5, 1)
+
   call test_poly_1d(5)
-  stop
 
   mask_7x7 = 1
   call test_weno_2d(mask_7x7, 1)
@@ -99,6 +103,7 @@ contains
     integer, intent(in) :: check_point_idx
 
     type(weno_tensor_product_type), allocatable :: weno1d
+    real(8) dx, fi(size(mask, 1)), fo(20)
     integer sw, i, k, ierr
 
     sw = size(mask, 1)
@@ -117,8 +122,11 @@ contains
     ! |_____|_____|_____|_____|_____|
 
     call weno1d%init(nd=1, sw=sw, is=-int(sw/2), ie=int(sw/2), mask=mask)
-    call weno1d%add_point(x=-0.5d0)
-    call weno1d%add_point(x= 0.5d0)
+
+    dx = dble(sw) / (size(fo) - 1)
+    do i = 1, size(fo)
+      call weno1d%add_point(x=-sw/2.0d0+(i-1)*dx)
+    end do
     call weno1d%calc_ideal_coefs(ierr)
     if (ierr /= 0) then
       write(*, *) 'Failed to calculate WENO ideal coefficients!'
@@ -139,6 +147,14 @@ contains
     end do
     write(*, *)
     write(*, *)
+
+    !fi = 0
+    !fi(1:int(sw/2)+1) = 1
+    !call weno1d%reconstruct(fi, fo, ierr)
+    !do i = 1, size(fo)
+    !  write(*, '(F10.5, A1)', advance='no') fo(i), ','
+    !end do
+    !write(*, *)
 
     deallocate(weno1d)
 
@@ -242,14 +258,15 @@ contains
       return
     end if
 
-    fi = 0
-    fi(1:int(sw/2)) = 1
-
-    call poly1d%reconstruct(fi, fo, ierr)
-
-    do i = 1, size(fo)
-      print *, i, fo(i)
-    end do
+    !dx = 1
+    !do i = 1, sw
+    !  fi(i) = sw / (2 * pi) * (cos(2 * pi / sw * poly1d%xc(i) - 0.5d0) - cos(2 * pi / sw * poly1d%xc(i) + 0.5d0))
+    !end do
+    !call poly1d%reconstruct(fi, fo, ierr)
+    !do i = 1, size(fo)
+    !  write(*, '(F10.5, A1)', advance='no') fo(i), ','
+    !end do
+    !write(*, *)
 
     deallocate(poly1d)
 

@@ -11,21 +11,21 @@ module poly_tensor_product_mod
 
   type poly_tensor_product_type
     logical :: initialized = .false.
-    integer :: nd     = 0            ! Dimension number
-    integer :: sw     = 0            ! Stencil width
-    integer :: nc     = 0            ! Number of cells
-    integer :: ns     = 0            ! Number of sub-stencils
-    integer :: npt    = 0            ! Number of evaluation points
-    integer :: is     = 0            ! Start index of subarray
-    integer :: ie     = 0            ! End index of subarray
-    integer :: js     = 0            ! Start index of subarray
-    integer :: je     = 0            ! End index of subarray
-    real(8), allocatable :: xc (:)   ! X coordinate of cell centroids
-    real(8), allocatable :: yc (:)   ! Y coordinate of cell centroids
-    real(8), allocatable :: x  (:)   ! X coordinate of evaluation point
-    real(8), allocatable :: y  (:)   ! Y coordinate of evaluation point
-    real(8), allocatable :: p  (:,:) ! Polynomial terms on each evaluation point
-    real(8), allocatable :: iAp(:,:) ! iA * p
+    integer :: nd     = 0              ! Dimension number
+    integer :: sw     = 0              ! Stencil width
+    integer :: nc     = 0              ! Number of cells
+    integer :: ns     = 0              ! Number of sub-stencils
+    integer :: npt    = 0              ! Number of evaluation points
+    integer :: is     = 0              ! Start index of subarray
+    integer :: ie     = 0              ! End index of subarray
+    integer :: js     = 0              ! Start index of subarray
+    integer :: je     = 0              ! End index of subarray
+    real(8), allocatable :: xc   (:)   ! X coordinate of cell centroids
+    real(8), allocatable :: yc   (:)   ! Y coordinate of cell centroids
+    real(8), allocatable :: x    (:)   ! X coordinate of evaluation point
+    real(8), allocatable :: y    (:)   ! Y coordinate of evaluation point
+    real(8), allocatable :: p    (:,:) ! Polynomial terms on each evaluation point
+    real(8), allocatable :: p_iAT(:,:) ! p * iA^T
   contains
     procedure :: init                  => poly_tensor_product_init
     procedure :: add_point             => poly_tensor_product_add_point
@@ -131,11 +131,11 @@ contains
 
     ierr = 0
 
-    if (allocated(this%p  )) deallocate(this%p  )
-    if (allocated(this%iAp)) deallocate(this%iAp)
+    if (allocated(this%p    )) deallocate(this%p    )
+    if (allocated(this%p_iAT)) deallocate(this%p_iAT)
 
-    allocate(this%p  (this%nc,this%npt))
-    allocate(this%iAp(this%npt,this%nc))
+    allocate(this%p    (this%nc ,this%npt))
+    allocate(this%p_iAT(this%npt,this%nc ))
 
     allocate( A(this%nc,this%nc))
     allocate(iA(this%nc,this%nc))
@@ -164,18 +164,17 @@ contains
     ! Calculate inverse of integral coefficient matrix.
     select case (this%nd)
     case (1)
-      call calc_poly_tensor_product_integral_coef_matrix(nx=this%sw, x=this%xc, A=A)
+      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%xc, A)
     case (2)
-      call calc_poly_tensor_product_integral_coef_matrix(nx=this%sw, ny=this%sw, x=this%xc, y=this%yc, A=A)
+      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, this%xc, this%yc, A)
     end select
     call inverse_matrix(A, iA, ierr)
-
     if (ierr /= 0) then
       deallocate(A, iA)
       return
     end if
 
-    this%iAp = transpose(matmul(iA, this%p))
+    this%p_iAT = transpose(matmul(iA, this%p))
 
     deallocate(A, iA)
 
@@ -201,7 +200,7 @@ contains
     end if
 #endif
 
-    fo = matmul(this%iAp, fi)
+    fo = matmul(this%p_iAT, fi)
 
   end subroutine poly_tensor_product_reconstruct_1d
 
@@ -225,7 +224,7 @@ contains
     end if
 #endif
 
-    fo = matmul(this%iAp, pack(fi, .true.))
+    fo = matmul(this%p_iAT, pack(fi, .true.))
 
   end subroutine poly_tensor_product_reconstruct_2d
 
@@ -241,6 +240,7 @@ contains
     if (allocated(this%yc)) deallocate(this%yc)
     if (allocated(this%x )) deallocate(this%x )
     if (allocated(this%y )) deallocate(this%y )
+    if (allocated(this%p )) deallocate(this%p )
 
   end subroutine poly_tensor_product_release_unused_memory
 
@@ -258,12 +258,11 @@ contains
     this%js     = 0
     this%je     = 0
 
-    if (allocated(this%xc )) deallocate(this%xc )
-    if (allocated(this%yc )) deallocate(this%yc )
-    if (allocated(this%x  )) deallocate(this%x  )
-    if (allocated(this%y  )) deallocate(this%y  )
-    if (allocated(this%p  )) deallocate(this%p  )
-    if (allocated(this%iAp)) deallocate(this%iAp)
+    if (allocated(this%xc   )) deallocate(this%xc   )
+    if (allocated(this%yc   )) deallocate(this%yc   )
+    if (allocated(this%x    )) deallocate(this%x    )
+    if (allocated(this%y    )) deallocate(this%y    )
+    if (allocated(this%p_iAT)) deallocate(this%p_iAT)
 
     this%initialized = .false.
 

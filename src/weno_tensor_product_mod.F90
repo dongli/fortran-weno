@@ -32,9 +32,9 @@ module weno_tensor_product_mod
     real(8), allocatable :: a        (:)   ! Reconstruction coefficients
     real(8), allocatable :: p        (:,:) ! Polynomial terms on each evaluation point
     real(8), allocatable :: iA       (:,:) ! A * a = f, iA = inverse(A)
-    real(8), allocatable :: iAp      (:,:) ! iA * p
+    real(8), allocatable :: p_iAT    (:,:) ! p * iA^T
     real(8), allocatable :: ic       (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
-    real(16), allocatable :: iAp_r16 (:,:) ! Working arrays
+    real(16), allocatable :: iA_p    (:,:) ! Working arrays
     type(weno_tensor_product_type), allocatable :: subs(:) ! Sub-stencils
   contains
     procedure :: init                  => weno_tensor_product_init
@@ -42,9 +42,12 @@ module weno_tensor_product_mod
     procedure :: calc_recon_matrix     => weno_tensor_product_calc_recon_matrix
     procedure :: calc_ideal_coefs      => weno_tensor_product_calc_ideal_coefs
     procedure :: calc_smooth_indicator => weno_tensor_product_calc_smooth_indicator
-    procedure :: reconstruct           => weno_tensor_product_reconstruct
     procedure :: release_unused_memory => weno_tensor_product_release_unused_memory
     procedure :: clear                 => weno_tensor_product_clear
+    procedure, private :: weno_tensor_product_reconstruct_1d
+    procedure, private :: weno_tensor_product_reconstruct_2d
+    generic :: reconstruct => weno_tensor_product_reconstruct_1d, &
+                              weno_tensor_product_reconstruct_2d
     procedure, private :: weno_tensor_product_assign
     generic :: assignment(=) => weno_tensor_product_assign
     final :: weno_tensor_product_final
@@ -194,15 +197,15 @@ contains
 
     ierr = 0
 
-    if (allocated(this%p      )) deallocate(this%p      )
-    if (allocated(this%iA     )) deallocate(this%iA     )
-    if (allocated(this%iAp    )) deallocate(this%iAp    )
-    if (allocated(this%iAp_r16)) deallocate(this%iAp_r16)
+    if (allocated(this%p    )) deallocate(this%p    )
+    if (allocated(this%iA   )) deallocate(this%iA   )
+    if (allocated(this%p_iAT)) deallocate(this%p_iAT)
+    if (allocated(this%iA_p )) deallocate(this%iA_p )
 
-    allocate(this%p      (this%nc,this%npt))
-    allocate(this%iA     (this%nc,this%nc))
-    allocate(this%iAp    (this%npt,this%nc))
-    allocate(this%iAp_r16(this%nc,this%npt))
+    allocate(this%p    (this%nc ,this%npt))
+    allocate(this%iA   (this%nc ,this%nc ))
+    allocate(this%p_iAT(this%npt,this%nc ))
+    allocate(this%iA_p (this%nc ,this%npt))
 
     allocate( A     (this%nc,this%nc ))
     allocate(iA     (this%nc,this%nc ))
@@ -261,23 +264,23 @@ contains
       return
     end if
 
-    this%iAp_r16(1:n,:) = matmul(iA(1:n,1:n), this%p(1:n,:))
+    this%iA_p(1:n,:) = matmul(iA(1:n,1:n), this%p(1:n,:))
 
     ! Copy double double iA into double iA.
     this%iA = iA
 
-    ! Rearrange iA and iAp.
+    ! Rearrange iA and iA_p.
     do n = this%nc, 1, -1
       if (idx_map(n) /= 0) then
-        this%iA     (n,:) = this%iA     (idx_map(n),:)
-        this%iAp_r16(n,:) = this%iAp_r16(idx_map(n),:)
+        this%iA  (n,:) = this%iA  (idx_map(n),:)
+        this%iA_p(n,:) = this%iA_p(idx_map(n),:)
       else
-        this%iA     (n,:) = 0
-        this%iAp_r16(n,:) = 0
+        this%iA  (n,:) = 0
+        this%iA_p(n,:) = 0
       end if
     end do
 
-    this%iAp = transpose(this%iAp_r16)
+    this%p_iAT = transpose(this%iA_p)
 
     deallocate(A, iA, idx_map)
 
@@ -321,7 +324,7 @@ contains
             if (this%subs(k)%cell_mask(this%subs(k)%is+i-1,this%subs(k)%js+j-1) == 1) then
               m = (j + dj - 1) * this%sw     + i + di
               n = (j      - 1) * this%sub_sw + i
-              A(m,k) = this%subs(k)%iAp_r16(n,p)
+              A(m,k) = this%subs(k)%iA_p(n,p)
             end if
           end do
         end do
@@ -329,13 +332,13 @@ contains
       AtA = matmul(transpose(A), A)
       call inverse_matrix(AtA, iAtA, ierr)
       if (ierr /= 0) return
-      ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iAp_r16(:,p))
+      ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iA_p(:,p))
       ! Set near-zero values to zero exactly.
       do k = 1, this%ns
         if (abs(ic(k,p)) < 1.0e-15) ic(k,p) = 0
       end do
     end do
-    if (abs(sum(matmul(A, ic(:,1)) - this%iAp_r16(:,1))) > 1.0e-15) then
+    if (abs(sum(matmul(A, ic(:,1)) - this%iA_p(:,1))) > 1.0e-15) then
       ierr = 3
       this%ic = 0
     else
@@ -365,7 +368,55 @@ contains
 
   end subroutine weno_tensor_product_calc_smooth_indicator
 
-  subroutine weno_tensor_product_reconstruct(this, fi, fo, ierr)
+  subroutine weno_tensor_product_reconstruct_1d(this, fi, fo, ierr)
+
+    class(weno_tensor_product_type), intent(inout) :: this
+    real(8), intent(in ) :: fi(:)   ! Cell averaged function values
+    real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
+    integer, intent(out) :: ierr
+
+    integer k, p
+    real(8), parameter :: theta = 3
+    real(8), parameter :: eps = 1.0d-6
+    real(8) fs(this%ns,this%npt)
+    real(8) ic_p(this%ns), sc_p, w_p(this%ns)
+    real(8) ic_n(this%ns), sc_n, w_n(this%ns)
+
+    ierr = 0
+
+#ifndef NDEBUG
+    if (size(fi) /= this%nc) then
+      ierr = 1
+      return
+    end if
+    if (size(fo) /= this%npt) then
+      ierr = 1
+      return
+    end if
+#endif
+
+    ! Calculate point values from each available sub-stencils and smoothness
+    ! indicators for those sub-stencils.
+    do k = 1, this%ns
+      this%subs(k)%a = matmul(this%subs(k)%iA, fi)
+      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%p)
+      call this%subs(k)%calc_smooth_indicator()
+    end do
+
+    do p = 1, this%npt
+      ! Handle negative ideal coefficients by splitting method (Shi et al., 2002).
+      ic_p = (this%ic(:,p) + theta * abs(this%ic(:,p))) / 2.0d0 ! Positive part
+      ic_n = ic_p - this%ic(:,p)                                ! Negative part
+      sc_p = sum(ic_p); ic_p = ic_p / sc_p
+      sc_n = sum(ic_n); ic_n = ic_n / sc_n
+      w_p = ic_p / (eps + this%subs(:)%si)**2
+      w_n = ic_n / (eps + this%subs(:)%si)**2
+      fo(p) = sc_p * sum(w_p * fs(:,p)) + sc_n * sum(w_n * fs(:,p))
+    end do
+
+  end subroutine weno_tensor_product_reconstruct_1d
+
+  subroutine weno_tensor_product_reconstruct_2d(this, fi, fo, ierr)
 
     class(weno_tensor_product_type), intent(inout) :: this
     real(8), intent(in ) :: fi(:,:) ! Cell averaged function values
@@ -411,7 +462,7 @@ contains
       fo(p) = sc_p * sum(w_p * fs(:,p)) + sc_n * sum(w_n * fs(:,p))
     end do
 
-  end subroutine weno_tensor_product_reconstruct
+  end subroutine weno_tensor_product_reconstruct_2d
 
   subroutine weno_tensor_product_release_unused_memory(this)
 
@@ -426,7 +477,7 @@ contains
     if (allocated(this%yc       )) deallocate(this%yc       )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
-    if (allocated(this%iAp_r16  )) deallocate(this%iAp_r16  )
+    if (allocated(this%iA_p     )) deallocate(this%iA_p     )
 
     ! Shrink subs and ic arrays to only contain unmasked sub-stencils.
     ns = this%ns
@@ -479,8 +530,8 @@ contains
     if (allocated(this%y        )) deallocate(this%y        )
     if (allocated(this%p        )) deallocate(this%p        )
     if (allocated(this%iA       )) deallocate(this%iA       )
-    if (allocated(this%iAp      )) deallocate(this%iAp      )
-    if (allocated(this%iAp_r16  )) deallocate(this%iAp_r16  )
+    if (allocated(this%p_iAT    )) deallocate(this%p_iAT    )
+    if (allocated(this%iA_p     )) deallocate(this%iA_p     )
     if (allocated(this%ic       )) deallocate(this%ic       )
     if (allocated(this%subs     )) deallocate(this%subs     )
 
@@ -508,15 +559,15 @@ contains
     this%je     = other%je
 
     allocate(this%cell_mask(this%sw,this%sw**(this%nd-1)))
-    allocate(this%a  (this%nc))
-    allocate(this%p  (this%nc,this%npt))
-    allocate(this%iA (this%nc,this%nc))
-    allocate(this%iAp(this%nc,this%npt))
+    allocate(this%a    (this%nc))
+    allocate(this%p    (this%nc,this%npt))
+    allocate(this%iA   (this%nc,this%nc))
+    allocate(this%p_iAT(this%nc,this%npt))
 
     this%cell_mask = other%cell_mask
     this%p         = other%p
     this%iA        = other%iA
-    this%iAp       = other%iAp
+    this%p_iAT     = other%p_iAT
 
     this%initialized = .true.
 
