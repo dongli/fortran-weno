@@ -20,6 +20,7 @@ endif ()
 set(source_files
   src/math_mod.F90
   src/poly_utils_mod.F90
+  src/smooth_indicators_mod.F90
   src/weno_tensor_product_mod.F90
   src/poly_tensor_product_mod.F90
   src/weno.F90

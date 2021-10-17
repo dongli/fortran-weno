@@ -2,6 +2,7 @@ module weno_tensor_product_mod
 
   use poly_utils_mod
   use math_mod
+  use smooth_indicators_mod
 
   implicit none
 
@@ -22,7 +23,7 @@ module weno_tensor_product_mod
     integer :: ie     = 0                  ! End index of subarray
     integer :: js     = 0                  ! Start index of subarray
     integer :: je     = 0                  ! End index of subarray
-    real(8) :: si     = 0                  ! Smoothness indicator
+    real(8) :: beta   = 0                  ! Smoothness indicator
     integer, allocatable :: cell_mask(:,:) ! Mask unavailable cells by 0
     integer, allocatable :: poly_mask(:,:) ! Mask unavailable polynomial terms by 0
     real(8), allocatable :: xc       (:)   ! X coordinate of cell centroids
@@ -33,15 +34,15 @@ module weno_tensor_product_mod
     real(8), allocatable :: p        (:,:) ! Polynomial terms on each evaluation point
     real(8), allocatable :: iA       (:,:) ! A * a = f, iA = inverse(A)
     real(8), allocatable :: p_iAT    (:,:) ! p * iA^T
-    real(8), allocatable :: ic       (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
+    real(8), allocatable :: gamma    (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
     real(16), allocatable :: iA_p    (:,:) ! Working arrays
     type(weno_tensor_product_type), allocatable :: subs(:) ! Sub-stencils
+    procedure(smooth_indicator_interface), nopass, pointer :: smooth_indicator => null()
   contains
     procedure :: init                  => weno_tensor_product_init
     procedure :: add_point             => weno_tensor_product_add_point
     procedure :: calc_recon_matrix     => weno_tensor_product_calc_recon_matrix
     procedure :: calc_ideal_coefs      => weno_tensor_product_calc_ideal_coefs
-    procedure :: calc_smooth_indicator => weno_tensor_product_calc_smooth_indicator
     procedure :: release_unused_memory => weno_tensor_product_release_unused_memory
     procedure :: clear                 => weno_tensor_product_clear
     procedure, private :: weno_tensor_product_reconstruct_1d
@@ -137,6 +138,14 @@ contains
           call this%subs(k)%init(nd=nd, sw=this%sub_sw, xc=this%xc(i:sub_ie), yc=this%yc(j:sub_je), &
                                  is=i, ie=sub_ie, js=j, je=sub_je, id=k, has_subs=.false., &
                                  mask=this%cell_mask(i:sub_ie,j:sub_je))
+          select case (nd)
+          case (1)
+          case (2)
+            select case (this%sub_sw)
+            case (3)
+              this%subs(k)%smooth_indicator => smooth_indicator_3x3
+            end select
+          end select
           k = k + 1
         end do
       end do
@@ -292,7 +301,7 @@ contains
     integer, intent(out) :: ierr
 
     ! Local double double arrays for preserving precision.
-    real(16), allocatable, dimension(:,:) :: A, AtA, iAtA, ic
+    real(16), allocatable, dimension(:,:) :: A, AtA, iAtA, gamma
     integer i, j, k, p, m, n, di, dj
 
     ierr = 0
@@ -308,13 +317,13 @@ contains
     end do
     call this%calc_recon_matrix(ierr)
 
-    if (allocated(this%ic)) deallocate(this%ic)
-    allocate(this%ic(this%ns,this%npt))
+    if (allocated(this%gamma)) deallocate(this%gamma)
+    allocate(this%gamma(this%ns,this%npt))
 
     allocate(   A(this%nc,this%ns )); A = 0
     allocate( AtA(this%ns,this%ns ))
     allocate(iAtA(this%ns,this%ns ))
-    allocate(  ic(this%ns,this%npt)); ic = 0
+    allocate(  gamma(this%ns,this%npt)); gamma = 0
     do p = 1, this%npt
       do k = 1, this%ns
         di = this%subs(k)%is - this%is
@@ -332,41 +341,21 @@ contains
       AtA = matmul(transpose(A), A)
       call inverse_matrix(AtA, iAtA, ierr)
       if (ierr /= 0) return
-      ic(:,p) = matmul(matmul(iAtA, transpose(A)), this%iA_p(:,p))
+      gamma(:,p) = matmul(matmul(iAtA, transpose(A)), this%iA_p(:,p))
       ! Set near-zero values to zero exactly.
       do k = 1, this%ns
-        if (abs(ic(k,p)) < 1.0e-15) ic(k,p) = 0
+        if (abs(gamma(k,p)) < 1.0e-15) gamma(k,p) = 0
       end do
     end do
-    if (abs(sum(matmul(A, ic(:,1)) - this%iA_p(:,1))) > 1.0e-15) then
+    if (abs(sum(matmul(A, gamma(:,1)) - this%iA_p(:,1))) > 1.0e-15) then
       ierr = 3
-      this%ic = 0
+      this%gamma = 0
     else
-      this%ic = ic
+      this%gamma = gamma
     end if
-    deallocate(A, AtA, iAtA, ic)
+    deallocate(A, AtA, iAtA, gamma)
 
   end subroutine weno_tensor_product_calc_ideal_coefs
-
-  subroutine weno_tensor_product_calc_smooth_indicator(this)
-
-    class(weno_tensor_product_type), intent(inout) :: this
-
-    associate (a => this%a)
-    select case (this%nd)
-    case (1)
-    case (2)
-      select case (this%sw)
-      case (3)
-        this%si = (  720 * a(2) * a(2) + 3120 * a(3) * a(3) + 720  * a(4) * a(4) + 840   * a(5) * a(5) &
-                  +  120 * a(4) * a(6) + 3389 * a(6) * a(6) + 3120 * a(7) * a(7) + 120   * a(2) * a(8) &
-                  + 3389 * a(8) * a(8) + 520  * a(3) * a(9) + 520  * a(7) * a(9) + 13598 * a(9) * a(9) ) / 720
-      case (4)
-      end select
-    end select
-    end associate
-
-  end subroutine weno_tensor_product_calc_smooth_indicator
 
   subroutine weno_tensor_product_reconstruct_1d(this, fi, fo, ierr)
 
@@ -379,8 +368,8 @@ contains
     real(8), parameter :: theta = 3
     real(8), parameter :: eps = 1.0d-6
     real(8) fs(this%ns,this%npt)
-    real(8) ic_p(this%ns), sc_p, w_p(this%ns)
-    real(8) ic_n(this%ns), sc_n, w_n(this%ns)
+    real(8) gamma_p(this%ns), sigma_p, weight_p(this%ns)
+    real(8) gamma_n(this%ns), sigma_n, weight_n(this%ns)
 
     ierr = 0
 
@@ -400,18 +389,19 @@ contains
     do k = 1, this%ns
       this%subs(k)%a = matmul(this%subs(k)%iA, fi)
       fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%p)
-      call this%subs(k)%calc_smooth_indicator()
+      this%subs(k)%beta = this%subs(k)%smooth_indicator(this%subs(k)%a)
     end do
+    ! WENO-Z
 
     do p = 1, this%npt
       ! Handle negative ideal coefficients by splitting method (Shi et al., 2002).
-      ic_p = (this%ic(:,p) + theta * abs(this%ic(:,p))) / 2.0d0 ! Positive part
-      ic_n = ic_p - this%ic(:,p)                                ! Negative part
-      sc_p = sum(ic_p); ic_p = ic_p / sc_p
-      sc_n = sum(ic_n); ic_n = ic_n / sc_n
-      w_p = ic_p / (eps + this%subs(:)%si)**2
-      w_n = ic_n / (eps + this%subs(:)%si)**2
-      fo(p) = sc_p * sum(w_p * fs(:,p)) + sc_n * sum(w_n * fs(:,p))
+      gamma_p = (this%gamma(:,p) + theta * abs(this%gamma(:,p))) / 2.0d0 ! Positive part
+      gamma_n = gamma_p - this%gamma(:,p)                                ! Negative part
+      sigma_p = sum(gamma_p); gamma_p = gamma_p / sigma_p
+      sigma_n = sum(gamma_n); gamma_n = gamma_n / sigma_n
+      weight_p = gamma_p / (eps + this%subs(:)%beta)**2
+      weight_n = gamma_n / (eps + this%subs(:)%beta)**2
+      fo(p) = sigma_p * sum(weight_p * fs(:,p)) + sigma_n * sum(weight_n * fs(:,p))
     end do
 
   end subroutine weno_tensor_product_reconstruct_1d
@@ -427,8 +417,8 @@ contains
     real(8), parameter :: theta = 3
     real(8), parameter :: eps = 1.0d-6
     real(8) fs(this%ns,this%npt)
-    real(8) ic_p(this%ns), sc_p, w_p(this%ns)
-    real(8) ic_n(this%ns), sc_n, w_n(this%ns)
+    real(8) gamma_p(this%ns), sigma_p, weight_p(this%ns)
+    real(8) gamma_n(this%ns), sigma_n, weight_n(this%ns)
 
     ierr = 0
 
@@ -448,18 +438,18 @@ contains
     do k = 1, this%ns
       this%subs(k)%a = matmul(this%subs(k)%iA, pack(fi(this%is:this%ie,this%js:this%je), .true.))
       fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%p)
-      call this%subs(k)%calc_smooth_indicator()
+      this%subs(k)%beta = this%subs(k)%smooth_indicator(this%subs(k)%a)
     end do
 
     do p = 1, this%npt
       ! Handle negative ideal coefficients by splitting method (Shi et al., 2002).
-      ic_p = (this%ic(:,p) + theta * abs(this%ic(:,p))) / 2.0d0 ! Positive part
-      ic_n = ic_p - this%ic(:,p)                                ! Negative part
-      sc_p = sum(ic_p); ic_p = ic_p / sc_p
-      sc_n = sum(ic_n); ic_n = ic_n / sc_n
-      w_p = ic_p / (eps + this%subs(:)%si)**2
-      w_n = ic_n / (eps + this%subs(:)%si)**2
-      fo(p) = sc_p * sum(w_p * fs(:,p)) + sc_n * sum(w_n * fs(:,p))
+      gamma_p = (this%gamma(:,p) + theta * abs(this%gamma(:,p))) / 2.0d0 ! Positive part
+      gamma_n = gamma_p - this%gamma(:,p)                                ! Negative part
+      sigma_p = sum(gamma_p); gamma_p = gamma_p / sigma_p
+      sigma_n = sum(gamma_n); gamma_n = gamma_n / sigma_n
+      weight_p = gamma_p / (eps + this%subs(:)%beta)**2
+      weight_n = gamma_n / (eps + this%subs(:)%beta)**2
+      fo(p) = sigma_p * sum(weight_p * fs(:,p)) + sigma_n * sum(weight_n * fs(:,p))
     end do
 
   end subroutine weno_tensor_product_reconstruct_2d
@@ -469,7 +459,7 @@ contains
     class(weno_tensor_product_type), intent(inout) :: this
 
     type(weno_tensor_product_type), allocatable :: subs(:)
-    real(8), allocatable :: ic(:,:)
+    real(8), allocatable :: gamma(:,:)
     integer i, k, ns
 
     if (allocated(this%poly_mask)) deallocate(this%poly_mask)
@@ -479,28 +469,28 @@ contains
     if (allocated(this%y        )) deallocate(this%y        )
     if (allocated(this%iA_p     )) deallocate(this%iA_p     )
 
-    ! Shrink subs and ic arrays to only contain unmasked sub-stencils.
+    ! Shrink subs and gamma arrays to only contain unmasked sub-stencils.
     ns = this%ns
     do k = 1, this%ns
       if (any(this%subs(k)%cell_mask == 0)) ns = ns - 1
     end do
     if (ns < this%ns) then
-      allocate(subs(ns), ic(ns,this%npt))
+      allocate(subs(ns), gamma(ns,this%npt))
       i = 1
       do k = 1, this%ns
         if (any(this%subs(k)%cell_mask == 0)) cycle
         subs(i) = this%subs(k)
-        ic(i,:) = this%ic(k,:)
+        gamma(i,:) = this%gamma(k,:)
         i = i + 1
       end do
-      deallocate(this%subs, this%ic)
+      deallocate(this%subs, this%gamma)
       this%ns = ns
-      allocate(this%subs(ns), this%ic(ns,this%npt))
+      allocate(this%subs(ns), this%gamma(ns,this%npt))
       do k = 1, this%ns
         this%subs(k) = subs(k)
-        this%ic(k,:) = ic(k,:)
+        this%gamma(k,:) = gamma(k,:)
       end do
-      deallocate(subs, ic)
+      deallocate(subs, gamma)
     end if
 
   end subroutine weno_tensor_product_release_unused_memory
@@ -521,6 +511,8 @@ contains
     this%js     = 0
     this%je     = 0
 
+    this%smooth_indicator => null()
+
     if (allocated(this%cell_mask)) deallocate(this%cell_mask)
     if (allocated(this%poly_mask)) deallocate(this%poly_mask)
     if (allocated(this%xc       )) deallocate(this%xc       )
@@ -532,7 +524,7 @@ contains
     if (allocated(this%iA       )) deallocate(this%iA       )
     if (allocated(this%p_iAT    )) deallocate(this%p_iAT    )
     if (allocated(this%iA_p     )) deallocate(this%iA_p     )
-    if (allocated(this%ic       )) deallocate(this%ic       )
+    if (allocated(this%gamma    )) deallocate(this%gamma    )
     if (allocated(this%subs     )) deallocate(this%subs     )
 
     this%initialized = .false.
