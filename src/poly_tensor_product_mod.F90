@@ -11,21 +11,21 @@ module poly_tensor_product_mod
 
   type poly_tensor_product_type
     logical :: initialized = .false.
-    integer :: nd     = 0              ! Dimension number
-    integer :: sw     = 0              ! Stencil width
-    integer :: nc     = 0              ! Number of cells
-    integer :: ns     = 0              ! Number of sub-stencils
-    integer :: npt    = 0              ! Number of evaluation points
-    integer :: is     = 0              ! Start index of subarray
-    integer :: ie     = 0              ! End index of subarray
-    integer :: js     = 0              ! Start index of subarray
-    integer :: je     = 0              ! End index of subarray
-    real(8), allocatable :: xc   (:)   ! X coordinate of cell centroids
-    real(8), allocatable :: yc   (:)   ! Y coordinate of cell centroids
-    real(8), allocatable :: x    (:)   ! X coordinate of evaluation point
-    real(8), allocatable :: y    (:)   ! Y coordinate of evaluation point
-    real(8), allocatable :: p    (:,:) ! Polynomial terms on each evaluation point
-    real(8), allocatable :: p_iAT(:,:) ! p * iA^T
+    integer :: nd     = 0                ! Dimension number
+    integer :: sw     = 0                ! Stencil width
+    integer :: nc     = 0                ! Number of cells
+    integer :: ns     = 0                ! Number of sub-stencils
+    integer :: npt    = 0                ! Number of evaluation points
+    integer :: is     = 0                ! Start index of subarray
+    integer :: ie     = 0                ! End index of subarray
+    integer :: js     = 0                ! Start index of subarray
+    integer :: je     = 0                ! End index of subarray
+    real(8), allocatable :: xc     (:)   ! X coordinate of cell centroids
+    real(8), allocatable :: yc     (:)   ! Y coordinate of cell centroids
+    real(8), allocatable :: x      (:)   ! X coordinate of evaluation point
+    real(8), allocatable :: y      (:)   ! Y coordinate of evaluation point
+    real(8), allocatable :: poly   (:,:) ! Polynomial terms on each evaluation point
+    real(8), allocatable :: poly_iA(:,:) ! poly * iA^T
   contains
     procedure :: init                  => poly_tensor_product_init
     procedure :: add_point             => poly_tensor_product_add_point
@@ -127,34 +127,34 @@ contains
 
     ! Local double double arrays for preserving precision.
     real(16), allocatable, dimension(:,:) :: A, iA
-    integer i, j, k, p, n
+    integer i, j, k, ipt, n
 
     ierr = 0
 
-    if (allocated(this%p    )) deallocate(this%p    )
-    if (allocated(this%p_iAT)) deallocate(this%p_iAT)
+    if (allocated(this%poly   )) deallocate(this%poly   )
+    if (allocated(this%poly_iA)) deallocate(this%poly_iA)
 
-    allocate(this%p    (this%nc ,this%npt))
-    allocate(this%p_iAT(this%npt,this%nc ))
+    allocate(this%poly   (this%nc ,this%npt))
+    allocate(this%poly_iA(this%npt,this%nc ))
 
     allocate( A(this%nc,this%nc))
     allocate(iA(this%nc,this%nc))
 
-    ! Set the p for each evaluation point.
+    ! Set the poly for each evaluation point.
     ! Select monomials according to mask.
     select case (this%nd)
     case (1)
-      do p = 1, this%npt
+      do ipt = 1, this%npt
         do k = 1, this%sw
-          call calc_poly_tensor_product_monomial(this%x(p), k - 1, this%p(k,p))
+          call calc_poly_tensor_product_monomial(this%x(ipt), k - 1, this%poly(k,ipt))
         end do
       end do
     case (2)
-      do p = 1, this%npt
+      do ipt = 1, this%npt
         k = 1
         do j = 1, this%sw
           do i = 1, this%sw
-            call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, this%p(k,p))
+            call calc_poly_tensor_product_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
             k = k + 1
           end do
         end do
@@ -174,7 +174,7 @@ contains
       return
     end if
 
-    this%p_iAT = transpose(matmul(iA, this%p))
+    this%poly_iA = transpose(matmul(iA, this%poly))
 
     deallocate(A, iA)
 
@@ -200,7 +200,7 @@ contains
     end if
 #endif
 
-    fo = matmul(this%p_iAT, fi)
+    fo = matmul(this%poly_iA, fi)
 
   end subroutine poly_tensor_product_reconstruct_1d
 
@@ -224,7 +224,7 @@ contains
     end if
 #endif
 
-    fo = matmul(this%p_iAT, pack(fi, .true.))
+    fo = matmul(this%poly_iA, pack(fi, .true.))
 
   end subroutine poly_tensor_product_reconstruct_2d
 
@@ -236,11 +236,11 @@ contains
     real(8), allocatable :: ic(:,:)
     integer i, k, ns
 
-    if (allocated(this%xc)) deallocate(this%xc)
-    if (allocated(this%yc)) deallocate(this%yc)
-    if (allocated(this%x )) deallocate(this%x )
-    if (allocated(this%y )) deallocate(this%y )
-    if (allocated(this%p )) deallocate(this%p )
+    if (allocated(this%xc  )) deallocate(this%xc  )
+    if (allocated(this%yc  )) deallocate(this%yc  )
+    if (allocated(this%x   )) deallocate(this%x   )
+    if (allocated(this%y   )) deallocate(this%y   )
+    if (allocated(this%poly)) deallocate(this%poly)
 
   end subroutine poly_tensor_product_release_unused_memory
 
@@ -258,11 +258,12 @@ contains
     this%js     = 0
     this%je     = 0
 
-    if (allocated(this%xc   )) deallocate(this%xc   )
-    if (allocated(this%yc   )) deallocate(this%yc   )
-    if (allocated(this%x    )) deallocate(this%x    )
-    if (allocated(this%y    )) deallocate(this%y    )
-    if (allocated(this%p_iAT)) deallocate(this%p_iAT)
+    if (allocated(this%xc     )) deallocate(this%xc     )
+    if (allocated(this%yc     )) deallocate(this%yc     )
+    if (allocated(this%x      )) deallocate(this%x      )
+    if (allocated(this%y      )) deallocate(this%y      )
+    if (allocated(this%poly   )) deallocate(this%poly   )
+    if (allocated(this%poly_iA)) deallocate(this%poly_iA)
 
     this%initialized = .false.
 
