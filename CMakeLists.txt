@@ -29,7 +29,7 @@ set(source_files
 add_library(weno ${source_files})
 
 get_directory_property(parent_dir PARENT_DIRECTORY)
-if (RUN_TEST AND NOT parent_dir)
+if (NOT parent_dir)
   add_executable(test.exe src/test.f90)
   target_link_libraries(test.exe weno)
 endif ()

@@ -10,6 +10,14 @@ module smooth_indicators_mod
 
 contains
 
+  pure real(8) function smooth_indicator_3(a) result(res)
+
+    real(8), intent(in) :: a(:) ! 3
+
+    res = a(2) * a(2) + 13 * a(3) * a(3) / 3
+
+  end function smooth_indicator_3
+
   pure real(8) function smooth_indicator_3x3(a) result(res)
 
     real(8), intent(in) :: a(:) ! 9

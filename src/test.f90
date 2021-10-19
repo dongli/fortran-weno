@@ -11,9 +11,6 @@ program test
   integer mask_5x5(5,5)
   integer mask_7x7(7,7)
 
-  mask_5 = 1
-  call test_weno_1d(mask_5, 1)
-
   call test_poly_1d(5)
 
   mask_7x7 = 1
@@ -95,6 +92,10 @@ program test
   mask_5(5,1) = 0; mask_5(4,1) = 0
   call test_weno_1d(mask_5, 1)
 
+  call test_acker2016()
+
+  call test_sine()
+
 contains
 
   subroutine test_weno_1d(mask, check_point_idx)
@@ -103,7 +104,6 @@ contains
     integer, intent(in) :: check_point_idx
 
     type(weno_tensor_product_type), allocatable :: weno1d
-    real(8) dx, fi(size(mask, 1)), fo(20)
     integer sw, i, k, ierr
 
     sw = size(mask, 1)
@@ -118,15 +118,12 @@ contains
 
     !  _____________________________
     ! |     |     |     |     |     |
-    ! |     |     x i0  x     |     |
+    ! |     |     |  0  x     |     |
     ! |_____|_____|_____|_____|_____|
-
-    call weno1d%init(nd=1, sw=sw, is=-int(sw/2), ie=int(sw/2), mask=mask)
-
-    dx = dble(sw) / (size(fo) - 1)
-    do i = 1, size(fo)
-      call weno1d%add_point(x=-sw/2.0d0+(i-1)*dx)
-    end do
+    !
+    call weno1d%init(nd=1, sw=sw, mask=mask)
+    call weno1d%add_point(x=-0.5d0)
+    call weno1d%add_point(x= 0.5d0)
     call weno1d%calc_ideal_coefs(ierr)
     if (ierr /= 0) then
       write(*, *) 'Failed to calculate WENO ideal coefficients!'
@@ -139,7 +136,7 @@ contains
     do i = 1, weno1d%sub_sw
       do k = 1, weno1d%ns
         if (weno1d%subs(k)%id == i) then
-          write(*, '(F10.5)', advance='no') weno1d%ic(k,check_point_idx)
+          write(*, '(F10.5)', advance='no') weno1d%gamma(k,check_point_idx)
           exit
         end if
       end do
@@ -147,14 +144,6 @@ contains
     end do
     write(*, *)
     write(*, *)
-
-    !fi = 0
-    !fi(1:int(sw/2)+1) = 1
-    !call weno1d%reconstruct(fi, fo, ierr)
-    !do i = 1, size(fo)
-    !  write(*, '(F10.5, A1)', advance='no') fo(i), ','
-    !end do
-    !write(*, *)
 
     deallocate(weno1d)
 
@@ -222,7 +211,7 @@ contains
       do i = 1, weno2d%sub_sw
         do k = 1, weno2d%ns
           if (weno2d%subs(k)%id == (j - 1) * weno2d%sub_sw + i) then
-            write(*, '(F10.5)', advance='no') weno2d%ic(k,check_point_idx)
+            write(*, '(F10.5)', advance='no') weno2d%gamma(k,check_point_idx)
             exit
           end if
         end do
@@ -297,5 +286,63 @@ contains
     deallocate(poly2d)
 
   end subroutine test_poly_2d
+
+  subroutine test_sine()
+
+    type(weno_tensor_product_type), allocatable :: weno1d
+    integer mask(5,1)
+    real(8) dx, xi(5), fi(5), fo(2)
+    integer sw, i, k, ierr
+
+    allocate(weno1d)
+
+    mask = 1
+    call weno1d%init(nd=1, sw=5, mask=mask)
+    call weno1d%add_point(x=-0.5d0)
+    call weno1d%add_point(x= 0.5d0)
+    call weno1d%calc_ideal_coefs(ierr)
+    call weno1d%release_unused_memory()
+
+    dx = 2 * pi / 160
+    do i = 1, 5
+      xi(i) = (30 + i - 1) * dx
+    end do
+    fi = sin(xi)
+    call weno1d%reconstruct(fi, fo, ierr)
+
+    write(*, *) cos(xi(3)), (fo(2) - fo(1)) / dx
+
+    deallocate(weno1d)
+
+  end subroutine test_sine
+
+  subroutine test_acker2016()
+
+    type(weno_tensor_product_type), allocatable :: weno1d
+    integer mask(5,1)
+    real(8) dx, fi(5), fo(2)
+    integer sw, i, k, ierr
+
+    allocate(weno1d)
+
+    mask = 1
+    call weno1d%init(nd=1, sw=5, mask=mask)
+    call weno1d%add_point(x=-0.5d0)
+    call weno1d%add_point(x= 0.5d0)
+    call weno1d%calc_ideal_coefs(ierr)
+    call weno1d%release_unused_memory()
+
+    dx = 0.05
+    fi = [0.0, 0.6015171347078453, 0.7544760960555312, 0.37714810606547045, -0.18077485348614492]
+    call weno1d%reconstruct(fi, fo, ierr)
+
+    write(*, *) 0.2231, weno1d%subs(1)%beta
+    write(*, *) 0.3172, weno1d%subs(2)%beta
+    write(*, *) 0.1177, weno1d%subs(3)%beta
+    write(*, *) -2.7820226261239465, (fo(2) - fo(1)) / dx
+
+    deallocate(weno1d)
+
+  end subroutine test_acker2016
 
 end program test

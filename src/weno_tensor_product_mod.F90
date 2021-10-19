@@ -31,11 +31,11 @@ module weno_tensor_product_mod
     real(8), allocatable :: x        (:)   ! X coordinate of evaluation point
     real(8), allocatable :: y        (:)   ! Y coordinate of evaluation point
     real(8), allocatable :: a        (:)   ! Reconstruction coefficients
-    real(8), allocatable :: p        (:,:) ! Polynomial terms on each evaluation point
+    real(8), allocatable :: poly     (:,:) ! Polynomial terms on each evaluation point
     real(8), allocatable :: iA       (:,:) ! A * a = f, iA = inverse(A)
-    real(8), allocatable :: p_iAT    (:,:) ! p * iA^T
+    real(8), allocatable :: poly_iA  (:,:) ! poly * iA
     real(8), allocatable :: gamma    (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
-    real(16), allocatable :: iA_p    (:,:) ! Working arrays
+    real(16), allocatable :: iA_poly (:,:) ! Working arrays
     type(weno_tensor_product_type), allocatable :: subs(:) ! Sub-stencils
     procedure(smooth_indicator_interface), nopass, pointer :: smooth_indicator => null()
   contains
@@ -140,6 +140,10 @@ contains
                                  mask=this%cell_mask(i:sub_ie,j:sub_je))
           select case (nd)
           case (1)
+            select case (this%sub_sw)
+            case (3)
+              this%subs(k)%smooth_indicator => smooth_indicator_3
+            end select
           case (2)
             select case (this%sub_sw)
             case (3)
@@ -202,23 +206,23 @@ contains
     ! Local double double arrays for preserving precision.
     real(16), allocatable, dimension(:,:) :: A, iA
     integer , allocatable :: idx_map(:)
-    integer i, j, k, p, n
+    integer i, j, k, ipt, n
 
     ierr = 0
 
-    if (allocated(this%p    )) deallocate(this%p    )
-    if (allocated(this%iA   )) deallocate(this%iA   )
-    if (allocated(this%p_iAT)) deallocate(this%p_iAT)
-    if (allocated(this%iA_p )) deallocate(this%iA_p )
+    if (allocated(this%poly   )) deallocate(this%poly   )
+    if (allocated(this%iA     )) deallocate(this%iA     )
+    if (allocated(this%iA_poly)) deallocate(this%iA_poly)
+    if (allocated(this%poly_iA)) deallocate(this%poly_iA)
 
-    allocate(this%p    (this%nc ,this%npt))
-    allocate(this%iA   (this%nc ,this%nc ))
-    allocate(this%p_iAT(this%npt,this%nc ))
-    allocate(this%iA_p (this%nc ,this%npt))
+    allocate(this%poly   (this%nc ,this%npt))
+    allocate(this%iA     (this%nc ,this%nc ))
+    allocate(this%iA_poly(this%nc ,this%npt))
+    allocate(this%poly_iA(this%npt,this%nc ))
 
-    allocate( A     (this%nc,this%nc ))
-    allocate(iA     (this%nc,this%nc ))
-    allocate(idx_map(this%nc         )); idx_map = 0
+    allocate( A     (this%nc,this%nc))
+    allocate(iA     (this%nc,this%nc))
+    allocate(idx_map(this%nc        )); idx_map = 0
 
     ! Set index maps.
     k = 1; n = 1
@@ -231,26 +235,26 @@ contains
       end do
     end do
 
-    ! Set the p for each evaluation point.
+    ! Set the poly for each evaluation point.
     ! Select monomials according to mask.
     select case (this%nd)
     case (1)
-      do p = 1, this%npt
+      do ipt = 1, this%npt
         k = 1
         do i = 1, this%sw
           if (this%poly_mask(i,1) == 1) then
-            call calc_poly_tensor_product_monomial(this%x(p), i - 1, this%p(k,p))
+            call calc_poly_tensor_product_monomial(this%x(ipt), i - 1, this%poly(k,ipt))
             k = k + 1
           end if
         end do
       end do
     case (2)
-      do p = 1, this%npt
+      do ipt = 1, this%npt
         k = 1
         do j = 1, this%sw
           do i = 1, this%sw
             if (this%poly_mask(i,j) == 1) then
-              call calc_poly_tensor_product_monomial(this%x(p), this%y(p), i - 1, j - 1, this%p(k,p))
+              call calc_poly_tensor_product_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
               k = k + 1
             end if
           end do
@@ -273,23 +277,23 @@ contains
       return
     end if
 
-    this%iA_p(1:n,:) = matmul(iA(1:n,1:n), this%p(1:n,:))
+    this%iA_poly(1:n,:) = matmul(iA(1:n,1:n), this%poly(1:n,:))
 
     ! Copy double double iA into double iA.
-    this%iA = iA
+    this%iA = transpose(iA) ! Transpose iA for later convenience.
 
-    ! Rearrange iA and iA_p.
+    ! Rearrange iA and iA_poly.
     do n = this%nc, 1, -1
       if (idx_map(n) /= 0) then
-        this%iA  (n,:) = this%iA  (idx_map(n),:)
-        this%iA_p(n,:) = this%iA_p(idx_map(n),:)
+        this%iA     (:,n) = this%iA     (:,idx_map(n))
+        this%iA_poly(n,:) = this%iA_poly(idx_map(n),:)
       else
-        this%iA  (n,:) = 0
-        this%iA_p(n,:) = 0
+        this%iA     (:,n) = 0
+        this%iA_poly(n,:) = 0
       end if
     end do
 
-    this%p_iAT = transpose(this%iA_p)
+    this%poly_iA = transpose(this%iA_poly)
 
     deallocate(A, iA, idx_map)
 
@@ -302,7 +306,7 @@ contains
 
     ! Local double double arrays for preserving precision.
     real(16), allocatable, dimension(:,:) :: A, AtA, iAtA, gamma
-    integer i, j, k, p, m, n, di, dj
+    integer i, j, k, ipt, m, n, di, dj
 
     ierr = 0
 
@@ -320,11 +324,11 @@ contains
     if (allocated(this%gamma)) deallocate(this%gamma)
     allocate(this%gamma(this%ns,this%npt))
 
-    allocate(   A(this%nc,this%ns )); A = 0
-    allocate( AtA(this%ns,this%ns ))
-    allocate(iAtA(this%ns,this%ns ))
-    allocate(  gamma(this%ns,this%npt)); gamma = 0
-    do p = 1, this%npt
+    allocate(    A(this%nc,this%ns )); A = 0
+    allocate(  AtA(this%ns,this%ns ))
+    allocate( iAtA(this%ns,this%ns ))
+    allocate(gamma(this%ns,this%npt)); gamma = 0
+    do ipt = 1, this%npt
       do k = 1, this%ns
         di = this%subs(k)%is - this%is
         dj = this%subs(k)%js - this%js
@@ -333,7 +337,7 @@ contains
             if (this%subs(k)%cell_mask(this%subs(k)%is+i-1,this%subs(k)%js+j-1) == 1) then
               m = (j + dj - 1) * this%sw     + i + di
               n = (j      - 1) * this%sub_sw + i
-              A(m,k) = this%subs(k)%iA_p(n,p)
+              A(m,k) = this%subs(k)%iA_poly(n,ipt)
             end if
           end do
         end do
@@ -341,13 +345,13 @@ contains
       AtA = matmul(transpose(A), A)
       call inverse_matrix(AtA, iAtA, ierr)
       if (ierr /= 0) return
-      gamma(:,p) = matmul(matmul(iAtA, transpose(A)), this%iA_p(:,p))
+      gamma(:,ipt) = matmul(matmul(iAtA, transpose(A)), this%iA_poly(:,ipt))
       ! Set near-zero values to zero exactly.
       do k = 1, this%ns
-        if (abs(gamma(k,p)) < 1.0e-15) gamma(k,p) = 0
+        if (abs(gamma(k,ipt)) < 1.0e-15) gamma(k,ipt) = 0
       end do
     end do
-    if (abs(sum(matmul(A, gamma(:,1)) - this%iA_p(:,1))) > 1.0e-15) then
+    if (abs(sum(matmul(A, gamma(:,1)) - this%iA_poly(:,1))) > 1.0e-15) then
       ierr = 3
       this%gamma = 0
     else
@@ -364,12 +368,12 @@ contains
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
 
-    integer k, p
+    integer k, ipt
     real(8), parameter :: theta = 3
-    real(8), parameter :: eps = 1.0d-6
-    real(8) fs(this%ns,this%npt)
-    real(8) gamma_p(this%ns), sigma_p, weight_p(this%ns)
-    real(8) gamma_n(this%ns), sigma_n, weight_n(this%ns)
+    real(8), parameter :: eps = 1.0d-40
+    real(8) fs(this%ns,this%npt), tau, tmp(this%ns), alpha(this%ns)
+    real(8) gamma_p(this%ns), sigma_p, alpha_p(this%ns)
+    real(8) gamma_n(this%ns), sigma_n, alpha_n(this%ns)
 
     ierr = 0
 
@@ -387,21 +391,24 @@ contains
     ! Calculate point values from each available sub-stencils and smoothness
     ! indicators for those sub-stencils.
     do k = 1, this%ns
-      this%subs(k)%a = matmul(this%subs(k)%iA, fi)
-      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%p)
+      this%subs(k)%a = matmul(this%subs(k)%iA, fi(this%subs(k)%is:this%subs(k)%ie))
+      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%poly)
       this%subs(k)%beta = this%subs(k)%smooth_indicator(this%subs(k)%a)
     end do
-    ! WENO-Z
 
-    do p = 1, this%npt
+    ! WENO-Z
+    tau = abs(this%subs(1)%beta - this%subs(this%ns-1)%beta)
+
+    do ipt = 1, this%npt
       ! Handle negative ideal coefficients by splitting method (Shi et al., 2002).
-      gamma_p = (this%gamma(:,p) + theta * abs(this%gamma(:,p))) / 2.0d0 ! Positive part
-      gamma_n = gamma_p - this%gamma(:,p)                                ! Negative part
+      gamma_p = (this%gamma(:,ipt) + theta * abs(this%gamma(:,ipt))) / 2.0d0 ! Positive part
+      gamma_n = gamma_p - this%gamma(:,ipt)                                  ! Negative part
       sigma_p = sum(gamma_p); gamma_p = gamma_p / sigma_p
       sigma_n = sum(gamma_n); gamma_n = gamma_n / sigma_n
-      weight_p = gamma_p / (eps + this%subs(:)%beta)**2
-      weight_n = gamma_n / (eps + this%subs(:)%beta)**2
-      fo(p) = sigma_p * sum(weight_p * fs(:,p)) + sigma_n * sum(weight_n * fs(:,p))
+      tmp     = 1 + (tau / (eps + this%subs(:)%beta))**2
+      alpha_p = gamma_p * tmp
+      alpha_n = gamma_n * tmp
+      fo(ipt) = sigma_p * sum(alpha_p / sum(alpha_p) * fs(:,ipt)) - sigma_n * sum(alpha_n / sum(alpha_n) * fs(:,ipt))
     end do
 
   end subroutine weno_tensor_product_reconstruct_1d
@@ -413,12 +420,12 @@ contains
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
 
-    integer k, p
+    integer i, j, k, ipt, n
     real(8), parameter :: theta = 3
-    real(8), parameter :: eps = 1.0d-6
-    real(8) fs(this%ns,this%npt)
-    real(8) gamma_p(this%ns), sigma_p, weight_p(this%ns)
-    real(8) gamma_n(this%ns), sigma_n, weight_n(this%ns)
+    real(8), parameter :: eps = 1.0d-40
+    real(8) fs(this%ns,this%npt), tau, tmp(this%ns)
+    real(8) gamma_p(this%ns), sigma_p, alpha_p(this%ns)
+    real(8) gamma_n(this%ns), sigma_n, alpha_n(this%ns)
 
     ierr = 0
 
@@ -437,19 +444,30 @@ contains
     ! indicators for those sub-stencils.
     do k = 1, this%ns
       this%subs(k)%a = matmul(this%subs(k)%iA, pack(fi(this%is:this%ie,this%js:this%je), .true.))
-      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%p)
+      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%poly)
       this%subs(k)%beta = this%subs(k)%smooth_indicator(this%subs(k)%a)
     end do
 
-    do p = 1, this%npt
+    ! WENO-Z
+    tau = 0; n = 0
+    do j = 1, this%ns - 1
+      do i = j + 1, this%ns
+        tau = tau + abs(this%subs(i)%beta - this%subs(j)%beta)
+        n = n + 1
+      end do
+    end do
+    tau = tau / n
+
+    do ipt = 1, this%npt
       ! Handle negative ideal coefficients by splitting method (Shi et al., 2002).
-      gamma_p = (this%gamma(:,p) + theta * abs(this%gamma(:,p))) / 2.0d0 ! Positive part
-      gamma_n = gamma_p - this%gamma(:,p)                                ! Negative part
+      gamma_p = (this%gamma(:,ipt) + theta * abs(this%gamma(:,ipt))) / 2.0d0 ! Positive part
+      gamma_n = gamma_p - this%gamma(:,ipt)                                  ! Negative part
       sigma_p = sum(gamma_p); gamma_p = gamma_p / sigma_p
       sigma_n = sum(gamma_n); gamma_n = gamma_n / sigma_n
-      weight_p = gamma_p / (eps + this%subs(:)%beta)**2
-      weight_n = gamma_n / (eps + this%subs(:)%beta)**2
-      fo(p) = sigma_p * sum(weight_p * fs(:,p)) + sigma_n * sum(weight_n * fs(:,p))
+      tmp     = 1 + (tau / (eps + this%subs(:)%beta))**2
+      alpha_p = gamma_p * tmp
+      alpha_n = gamma_n * tmp
+      fo(ipt) = sigma_p * sum(alpha_p / sum(alpha_p) * fs(:,ipt)) - sigma_n * sum(alpha_n / sum(alpha_n) * fs(:,ipt))
     end do
 
   end subroutine weno_tensor_product_reconstruct_2d
@@ -467,7 +485,7 @@ contains
     if (allocated(this%yc       )) deallocate(this%yc       )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
-    if (allocated(this%iA_p     )) deallocate(this%iA_p     )
+    if (allocated(this%iA_poly  )) deallocate(this%iA_poly  )
 
     ! Shrink subs and gamma arrays to only contain unmasked sub-stencils.
     ns = this%ns
@@ -520,10 +538,10 @@ contains
     if (allocated(this%a        )) deallocate(this%a        )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
-    if (allocated(this%p        )) deallocate(this%p        )
+    if (allocated(this%poly     )) deallocate(this%poly     )
     if (allocated(this%iA       )) deallocate(this%iA       )
-    if (allocated(this%p_iAT    )) deallocate(this%p_iAT    )
-    if (allocated(this%iA_p     )) deallocate(this%iA_p     )
+    if (allocated(this%poly_iA  )) deallocate(this%poly_iA  )
+    if (allocated(this%iA_poly  )) deallocate(this%iA_poly  )
     if (allocated(this%gamma    )) deallocate(this%gamma    )
     if (allocated(this%subs     )) deallocate(this%subs     )
 
@@ -551,15 +569,15 @@ contains
     this%je     = other%je
 
     allocate(this%cell_mask(this%sw,this%sw**(this%nd-1)))
-    allocate(this%a    (this%nc))
-    allocate(this%p    (this%nc,this%npt))
-    allocate(this%iA   (this%nc,this%nc))
-    allocate(this%p_iAT(this%nc,this%npt))
+    allocate(this%a        (this%nc))
+    allocate(this%poly     (this%nc,this%npt))
+    allocate(this%iA       (this%nc,this%nc))
+    allocate(this%poly_iA  (this%nc,this%npt))
 
     this%cell_mask = other%cell_mask
-    this%p         = other%p
+    this%poly      = other%poly
     this%iA        = other%iA
-    this%p_iAT     = other%p_iAT
+    this%poly_iA   = other%poly_iA
 
     this%initialized = .true.
 
