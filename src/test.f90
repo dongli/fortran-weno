@@ -310,7 +310,10 @@ contains
     fi = sin(xi)
     call weno1d%reconstruct(fi, fo, ierr)
 
-    write(*, *) cos(xi(3)), (fo(2) - fo(1)) / dx
+    write(*, *) 'Sine function'
+    write(*, *) 'Truth: ', cos(xi(3))
+    write(*, *) 'Result:', (fo(2) - fo(1)) / dx
+    write(*, *)
 
     deallocate(weno1d)
 
@@ -336,10 +339,13 @@ contains
     fi = [0.0, 0.6015171347078453, 0.7544760960555312, 0.37714810606547045, -0.18077485348614492]
     call weno1d%reconstruct(fi, fo, ierr)
 
+    write(*, *) 'WENO-JS smoothness indicator:'
     write(*, *) 0.2231, weno1d%subs(1)%beta
     write(*, *) 0.3172, weno1d%subs(2)%beta
     write(*, *) 0.1177, weno1d%subs(3)%beta
-    write(*, *) -2.7820226261239465, (fo(2) - fo(1)) / dx
+    write(*, *) 'Truth: ', -2.7820226261239465
+    write(*, *) 'Result:', (fo(2) - fo(1)) / dx
+    write(*, *)
 
     deallocate(weno1d)
 
