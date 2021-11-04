@@ -98,6 +98,10 @@ program test
 
   call test_weno_rhombus(3)
 
+  call test_weno_rhombus(5)
+
+  call test_weno_rhombus(7)
+
 contains
 
   subroutine test_weno_1d(mask, check_point_idx)
