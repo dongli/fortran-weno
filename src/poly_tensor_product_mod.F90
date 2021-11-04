@@ -146,7 +146,7 @@ contains
     case (1)
       do ipt = 1, this%npt
         do k = 1, this%sw
-          call calc_poly_tensor_product_monomial(this%x(ipt), k - 1, this%poly(k,ipt))
+          call calc_monomial(this%x(ipt), k - 1, this%poly(k,ipt))
         end do
       end do
     case (2)
@@ -154,7 +154,7 @@ contains
         k = 1
         do j = 1, this%sw
           do i = 1, this%sw
-            call calc_poly_tensor_product_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
+            call calc_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
             k = k + 1
           end do
         end do
@@ -164,9 +164,9 @@ contains
     ! Calculate inverse of integral coefficient matrix.
     select case (this%nd)
     case (1)
-      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%xc, A)
+      call calc_poly_tensor_product_integral_matrix(this%sw, this%xc, A)
     case (2)
-      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, this%xc, this%yc, A)
+      call calc_poly_tensor_product_integral_matrix(this%sw, this%sw, this%xc, this%yc, A)
     end select
     call inverse_matrix(A, iA, ierr)
     if (ierr /= 0) then

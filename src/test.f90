@@ -96,6 +96,8 @@ program test
 
   call test_sine()
 
+  call test_weno_rhombus(3)
+
 contains
 
   subroutine test_weno_1d(mask, check_point_idx)
@@ -190,7 +192,7 @@ contains
     call weno2d%init(nd=2, sw=sw, is=-int(sw/2), ie=int(sw/2), js=-int(sw/2), je=int(sw/2), mask=mask)
     select case (sw)
     case (3, 7)
-      call weno2d%add_point(x=-0.5d0, y= 0.001d0)
+      call weno2d%add_point(x=-0.5d0, y= 0.0d0)
     case (5)
       call weno2d%add_point(x=-0.5d0, y= 0.0d0)
       call weno2d%add_point(x= 0.5d0, y= 0.0d0)
@@ -350,5 +352,56 @@ contains
     deallocate(weno1d)
 
   end subroutine test_acker2016
+
+  subroutine test_weno_rhombus(sw)
+
+    integer, intent(in) :: sw
+
+    type(weno_rhombus_type), allocatable :: weno2d
+    integer i, j, k, ierr
+    logical found
+
+    allocate(weno2d)
+
+    call weno2d%init(sw=sw)
+
+    write(*, *) 'Rhombus stencil:'
+    write(*, *)
+    do i = sw, 1, -1
+      do j = 1, sw
+        found = .false.
+        do k = 1, weno2d%nc
+          if (weno2d%ijxy(1,k) == i .and. weno2d%ijxy(2,k) == j) then
+            found = .true.
+            exit
+          end if
+        end do
+        if (found) then
+          write(*, '(A5)', advance='no') 'o'
+        else
+          write(*, '(5X)', advance='no')
+        end if
+      end do
+      write(*, *)
+    end do
+    write(*, *)
+
+    call weno2d%add_point(x=-0.5d0, y=0.288675134594813d0)
+    call weno2d%calc_ideal_coefs(ierr)
+    if (ierr /= 0) then
+      write(*, *) 'Failed to calculate rhombus WENO ideal coefficients!'
+      return
+    end if
+
+    write(*, *) 'Ideal sub-stencil coefficients:'
+    do i = 1, weno2d%ns
+      write(*, '(F20.15)', advance='no') weno2d%gamma(i,1)
+    end do
+    write(*, *)
+    write(*, *)
+
+    deallocate(weno2d)
+
+  end subroutine test_weno_rhombus
 
 end program test

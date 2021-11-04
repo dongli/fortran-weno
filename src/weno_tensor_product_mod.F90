@@ -243,7 +243,7 @@ contains
         k = 1
         do i = 1, this%sw
           if (this%poly_mask(i,1) == 1) then
-            call calc_poly_tensor_product_monomial(this%x(ipt), i - 1, this%poly(k,ipt))
+            call calc_monomial(this%x(ipt), i - 1, this%poly(k,ipt))
             k = k + 1
           end if
         end do
@@ -254,7 +254,7 @@ contains
         do j = 1, this%sw
           do i = 1, this%sw
             if (this%poly_mask(i,j) == 1) then
-              call calc_poly_tensor_product_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
+              call calc_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
               k = k + 1
             end if
           end do
@@ -265,9 +265,9 @@ contains
     ! Calculate inverse of integral coefficient matrix.
     select case (this%nd)
     case (1)
-      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%xc, A, this%cell_mask(:,1), this%poly_mask(:,1))
+      call calc_poly_tensor_product_integral_matrix(this%sw, this%xc, A, this%cell_mask(:,1), this%poly_mask(:,1))
     case (2)
-      call calc_poly_tensor_product_integral_coef_matrix(this%sw, this%sw, this%xc, this%yc, A, this%cell_mask, this%poly_mask)
+      call calc_poly_tensor_product_integral_matrix(this%sw, this%sw, this%xc, this%yc, A, this%cell_mask, this%poly_mask)
     end select
     n = count(this%cell_mask == 1)
     call inverse_matrix(A(1:n,1:n), iA(1:n,1:n), ierr)
@@ -310,7 +310,7 @@ contains
 
     ierr = 0
 
-    if (.not. allocated(this%subs)) then
+    if (.not. this%initialized) then
       ierr = 1
       return
     end if
@@ -320,6 +320,7 @@ contains
       if (ierr /= 0) return
     end do
     call this%calc_recon_matrix(ierr)
+    if (ierr /= 0) return
 
     if (allocated(this%gamma)) deallocate(this%gamma)
     allocate(this%gamma(this%ns,this%npt))
