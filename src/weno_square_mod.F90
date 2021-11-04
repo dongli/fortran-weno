@@ -12,30 +12,30 @@ module weno_square_mod
 
   type weno_square_type
     logical :: initialized = .false.
-    integer :: id     = 0                  ! Sub-stencil ID
-    integer :: nd     = 0                  ! Dimension number
-    integer :: sw     = 0                  ! Stencil width
-    integer :: sub_sw = 0                  ! Sub-stencil width
-    integer :: nc     = 0                  ! Number of cells
-    integer :: ns     = 0                  ! Number of sub-stencils
-    integer :: npt    = 0                  ! Number of evaluation points
-    integer :: is     = 0                  ! Start index of subarray
-    integer :: ie     = 0                  ! End index of subarray
-    integer :: js     = 0                  ! Start index of subarray
-    integer :: je     = 0                  ! End index of subarray
-    real(8) :: beta   = 0                  ! Smoothness indicator
-    integer, allocatable :: cell_mask(:,:) ! Mask unavailable cells by 0
-    integer, allocatable :: poly_mask(:,:) ! Mask unavailable polynomial terms by 0
-    real(8), allocatable :: xc       (:)   ! X coordinate of cell centroids
-    real(8), allocatable :: yc       (:)   ! Y coordinate of cell centroids
-    real(8), allocatable :: x        (:)   ! X coordinate of evaluation point
-    real(8), allocatable :: y        (:)   ! Y coordinate of evaluation point
-    real(8), allocatable :: a        (:)   ! Reconstruction coefficients
-    real(8), allocatable :: poly     (:,:) ! Polynomial terms on each evaluation point
-    real(8), allocatable :: iA       (:,:) ! A * a = f, iA = inverse(A)
-    real(8), allocatable :: poly_iA  (:,:) ! poly * iA
-    real(8), allocatable :: gamma    (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
-    real(16), allocatable :: iA_poly (:,:) ! Working arrays
+    integer :: id     = 0                     ! Sub-stencil ID
+    integer :: nd     = 0                     ! Dimension number
+    integer :: sw     = 0                     ! Stencil width
+    integer :: sub_sw = 0                     ! Sub-stencil width
+    integer :: nc     = 0                     ! Number of cells
+    integer :: ns     = 0                     ! Number of sub-stencils
+    integer :: npt    = 0                     ! Number of evaluation points
+    integer :: is     = 0                     ! Start index of subarray
+    integer :: ie     = 0                     ! End index of subarray
+    integer :: js     = 0                     ! Start index of subarray
+    integer :: je     = 0                     ! End index of subarray
+    real(8) :: beta   = 0                     ! Smoothness indicator
+    integer , allocatable :: cell_mask  (:,:) ! Mask unavailable cells by 0
+    integer , allocatable :: poly_mask  (:,:) ! Mask unavailable polynomial terms by 0
+    real( 8), allocatable :: xc         (:)   ! X coordinate of cell centroids
+    real( 8), allocatable :: yc         (:)   ! Y coordinate of cell centroids
+    real( 8), allocatable :: x          (:)   ! X coordinate of evaluation point
+    real( 8), allocatable :: y          (:)   ! Y coordinate of evaluation point
+    real( 8), allocatable :: a          (:)   ! Reconstruction coefficients
+    real( 8), allocatable :: poly       (:,:) ! Polynomial terms on each evaluation point
+    real( 8), allocatable :: iA         (:,:) ! A * a = f, iA = inverse(A)
+    real( 8), allocatable :: poly_iA    (:,:)
+    real(16), allocatable :: poly_iA_r16(:,:) ! poly * iA
+    real( 8), allocatable :: gamma      (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
     type(weno_square_type), allocatable :: subs(:) ! Sub-stencils
     procedure(smooth_indicator_interface), nopass, pointer :: smooth_indicator => null()
   contains
@@ -56,7 +56,7 @@ module weno_square_mod
 
 contains
 
-  subroutine weno_square_init(this, nd, sw, xc, yc, is, ie, js, je, mask, id, has_subs)
+  subroutine weno_square_init(this, nd, sw, xc, yc, is, ie, js, je, mask, id)
 
     class(weno_square_type), intent(inout) :: this
     integer, intent(in) :: nd
@@ -69,7 +69,6 @@ contains
     integer, intent(in), optional :: je
     integer, intent(in), optional :: mask(:,:) ! Cell mask
     integer, intent(in), optional :: id
-    logical, intent(in), optional :: has_subs
 
     integer i, j, k, sub_ie, sub_je
 
@@ -126,7 +125,7 @@ contains
     end if
 
     ! Initialize sub-stencils.
-    if (merge(has_subs, .true., present(has_subs))) then
+    if (this%id == 0) then
       this%sub_sw = int((sw + 1) / 2) ! Set sub-stencil size.
       this%ns = this%sub_sw**nd
       allocate(this%subs(this%ns))
@@ -136,7 +135,7 @@ contains
           sub_ie = i + this%sub_sw - 1
           sub_je = j + this%sub_sw**(nd-1) - 1
           call this%subs(k)%init(nd=nd, sw=this%sub_sw, xc=this%xc(i:sub_ie), yc=this%yc(j:sub_je), &
-                                 is=i, ie=sub_ie, js=j, je=sub_je, id=k, has_subs=.false., &
+                                 is=i, ie=sub_ie, js=j, je=sub_je, id=k, &
                                  mask=this%cell_mask(i:sub_ie,j:sub_je))
           select case (nd)
           case (1)
@@ -210,15 +209,15 @@ contains
 
     ierr = 0
 
-    if (allocated(this%poly   )) deallocate(this%poly   )
-    if (allocated(this%iA     )) deallocate(this%iA     )
-    if (allocated(this%iA_poly)) deallocate(this%iA_poly)
-    if (allocated(this%poly_iA)) deallocate(this%poly_iA)
+    if (allocated(this%poly       )) deallocate(this%poly       )
+    if (allocated(this%iA         )) deallocate(this%iA         )
+    if (allocated(this%poly_iA    )) deallocate(this%poly_iA    )
+    if (allocated(this%poly_iA_r16)) deallocate(this%poly_iA_r16)
 
-    allocate(this%poly   (this%nc ,this%npt))
-    allocate(this%iA     (this%nc ,this%nc ))
-    allocate(this%iA_poly(this%nc ,this%npt))
-    allocate(this%poly_iA(this%npt,this%nc ))
+    allocate(this%poly       (this%npt,this%nc))
+    allocate(this%iA         (this%nc ,this%nc))
+    allocate(this%poly_iA    (this%npt,this%nc))
+    allocate(this%poly_iA_r16(this%npt,this%nc))
 
     allocate( A     (this%nc,this%nc))
     allocate(iA     (this%nc,this%nc))
@@ -243,7 +242,7 @@ contains
         k = 1
         do i = 1, this%sw
           if (this%poly_mask(i,1) == 1) then
-            call calc_monomial(this%x(ipt), i - 1, this%poly(k,ipt))
+            call calc_monomial(this%x(ipt), i - 1, this%poly(ipt,k))
             k = k + 1
           end if
         end do
@@ -254,7 +253,7 @@ contains
         do j = 1, this%sw
           do i = 1, this%sw
             if (this%poly_mask(i,j) == 1) then
-              call calc_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
+              call calc_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(ipt,k))
               k = k + 1
             end if
           end do
@@ -269,31 +268,32 @@ contains
     case (2)
       call calc_poly_tensor_product_integral_matrix(this%sw, this%sw, this%xc, this%yc, A, this%cell_mask, this%poly_mask)
     end select
+    A = transpose(A)
     n = count(this%cell_mask == 1)
     call inverse_matrix(A(1:n,1:n), iA(1:n,1:n), ierr)
-
     if (ierr /= 0) then
       deallocate(A, iA, idx_map)
       return
     end if
 
-    this%iA_poly(1:n,:) = matmul(iA(1:n,1:n), this%poly(1:n,:))
+    this%poly_iA_r16(:,1:n) = matmul(this%poly(:,1:n), iA(1:n,1:n))
 
     ! Copy double double iA into double iA.
-    this%iA = transpose(iA) ! Transpose iA for later convenience.
+    this%iA = iA
 
-    ! Rearrange iA and iA_poly.
+    ! Rearrange iA and poly_iA.
     do n = this%nc, 1, -1
       if (idx_map(n) /= 0) then
-        this%iA     (:,n) = this%iA     (:,idx_map(n))
-        this%iA_poly(n,:) = this%iA_poly(idx_map(n),:)
+        this%iA         (:,n) = this%iA         (:,idx_map(n))
+        this%poly_iA_r16(:,n) = this%poly_iA_r16(:,idx_map(n))
       else
-        this%iA     (:,n) = 0
-        this%iA_poly(n,:) = 0
+        this%iA         (:,n) = 0
+        this%poly_iA_r16(:,n) = 0
       end if
     end do
 
-    this%poly_iA = transpose(this%iA_poly)
+    ! Copy double double poly_iA into double poly_iA.
+    this%poly_iA = this%poly_iA_r16
 
     deallocate(A, iA, idx_map)
 
@@ -338,7 +338,7 @@ contains
             if (this%subs(k)%cell_mask(this%subs(k)%is+i-1,this%subs(k)%js+j-1) == 1) then
               m = (j + dj - 1) * this%sw     + i + di
               n = (j      - 1) * this%sub_sw + i
-              A(m,k) = this%subs(k)%iA_poly(n,ipt)
+              A(m,k) = this%subs(k)%poly_iA_r16(ipt,n)
             end if
           end do
         end do
@@ -346,13 +346,13 @@ contains
       AtA = matmul(transpose(A), A)
       call inverse_matrix(AtA, iAtA, ierr)
       if (ierr /= 0) return
-      gamma(:,ipt) = matmul(matmul(iAtA, transpose(A)), this%iA_poly(:,ipt))
+      gamma(:,ipt) = matmul(matmul(iAtA, transpose(A)), this%poly_iA_r16(ipt,:))
       ! Set near-zero values to zero exactly.
       do k = 1, this%ns
         if (abs(gamma(k,ipt)) < 1.0e-15) gamma(k,ipt) = 0
       end do
     end do
-    if (abs(sum(matmul(A, gamma(:,1)) - this%iA_poly(:,1))) > 1.0e-15) then
+    if (abs(sum(matmul(A, gamma(:,1)) - this%poly_iA_r16(1,:))) > 1.0e-15) then
       ierr = 3
       this%gamma = 0
     else
@@ -393,7 +393,7 @@ contains
     ! indicators for those sub-stencils.
     do k = 1, this%ns
       this%subs(k)%a = matmul(this%subs(k)%iA, fi(this%subs(k)%is:this%subs(k)%ie))
-      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%poly)
+      fs(k,:) = matmul(this%subs(k)%poly, this%subs(k)%a)
       this%subs(k)%beta = this%subs(k)%smooth_indicator(this%subs(k)%a)
     end do
 
@@ -445,7 +445,7 @@ contains
     ! indicators for those sub-stencils.
     do k = 1, this%ns
       this%subs(k)%a = matmul(this%subs(k)%iA, pack(fi(this%is:this%ie,this%js:this%je), .true.))
-      fs(k,:) = matmul(this%subs(k)%a, this%subs(k)%poly)
+      fs(k,:) = matmul(this%subs(k)%poly, this%subs(k)%a)
       this%subs(k)%beta = this%subs(k)%smooth_indicator(this%subs(k)%a)
     end do
 
@@ -486,7 +486,6 @@ contains
     if (allocated(this%yc       )) deallocate(this%yc       )
     if (allocated(this%x        )) deallocate(this%x        )
     if (allocated(this%y        )) deallocate(this%y        )
-    if (allocated(this%iA_poly  )) deallocate(this%iA_poly  )
 
     ! Shrink subs and gamma arrays to only contain unmasked sub-stencils.
     ns = this%ns
@@ -532,19 +531,19 @@ contains
 
     this%smooth_indicator => null()
 
-    if (allocated(this%cell_mask)) deallocate(this%cell_mask)
-    if (allocated(this%poly_mask)) deallocate(this%poly_mask)
-    if (allocated(this%xc       )) deallocate(this%xc       )
-    if (allocated(this%yc       )) deallocate(this%yc       )
-    if (allocated(this%a        )) deallocate(this%a        )
-    if (allocated(this%x        )) deallocate(this%x        )
-    if (allocated(this%y        )) deallocate(this%y        )
-    if (allocated(this%poly     )) deallocate(this%poly     )
-    if (allocated(this%iA       )) deallocate(this%iA       )
-    if (allocated(this%poly_iA  )) deallocate(this%poly_iA  )
-    if (allocated(this%iA_poly  )) deallocate(this%iA_poly  )
-    if (allocated(this%gamma    )) deallocate(this%gamma    )
-    if (allocated(this%subs     )) deallocate(this%subs     )
+    if (allocated(this%cell_mask  )) deallocate(this%cell_mask  )
+    if (allocated(this%poly_mask  )) deallocate(this%poly_mask  )
+    if (allocated(this%xc         )) deallocate(this%xc         )
+    if (allocated(this%yc         )) deallocate(this%yc         )
+    if (allocated(this%a          )) deallocate(this%a          )
+    if (allocated(this%x          )) deallocate(this%x          )
+    if (allocated(this%y          )) deallocate(this%y          )
+    if (allocated(this%poly       )) deallocate(this%poly       )
+    if (allocated(this%iA         )) deallocate(this%iA         )
+    if (allocated(this%poly_iA    )) deallocate(this%poly_iA    )
+    if (allocated(this%poly_iA_r16)) deallocate(this%poly_iA_r16)
+    if (allocated(this%gamma      )) deallocate(this%gamma      )
+    if (allocated(this%subs       )) deallocate(this%subs       )
 
     this%initialized = .false.
 
