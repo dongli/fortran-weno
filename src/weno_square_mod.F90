@@ -56,7 +56,7 @@ module weno_square_mod
 
 contains
 
-  subroutine weno_square_init(this, nd, sw, xc, yc, is, ie, js, je, mask, id)
+  recursive subroutine weno_square_init(this, nd, sw, xc, yc, is, ie, js, je, mask, id)
 
     class(weno_square_type), intent(inout) :: this
     integer, intent(in) :: nd
@@ -158,7 +158,7 @@ contains
 
   end subroutine weno_square_init
 
-  subroutine weno_square_add_point(this, x, y)
+  recursive subroutine weno_square_add_point(this, x, y)
 
     class(weno_square_type), intent(inout) :: this
     real(8), intent(in) :: x
