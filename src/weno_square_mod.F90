@@ -1,4 +1,4 @@
-module weno_tensor_product_mod
+module weno_square_mod
 
   use poly_utils_mod
   use math_mod
@@ -8,9 +8,9 @@ module weno_tensor_product_mod
 
   private
 
-  public weno_tensor_product_type
+  public weno_square_type
 
-  type weno_tensor_product_type
+  type weno_square_type
     logical :: initialized = .false.
     integer :: id     = 0                  ! Sub-stencil ID
     integer :: nd     = 0                  ! Dimension number
@@ -36,29 +36,29 @@ module weno_tensor_product_mod
     real(8), allocatable :: poly_iA  (:,:) ! poly * iA
     real(8), allocatable :: gamma    (:,:) ! Ideal coefficients for combining sub-stencils (only on stencil)
     real(16), allocatable :: iA_poly (:,:) ! Working arrays
-    type(weno_tensor_product_type), allocatable :: subs(:) ! Sub-stencils
+    type(weno_square_type), allocatable :: subs(:) ! Sub-stencils
     procedure(smooth_indicator_interface), nopass, pointer :: smooth_indicator => null()
   contains
-    procedure :: init                  => weno_tensor_product_init
-    procedure :: add_point             => weno_tensor_product_add_point
-    procedure :: calc_recon_matrix     => weno_tensor_product_calc_recon_matrix
-    procedure :: calc_ideal_coefs      => weno_tensor_product_calc_ideal_coefs
-    procedure :: release_unused_memory => weno_tensor_product_release_unused_memory
-    procedure :: clear                 => weno_tensor_product_clear
-    procedure, private :: weno_tensor_product_reconstruct_1d
-    procedure, private :: weno_tensor_product_reconstruct_2d
-    generic :: reconstruct => weno_tensor_product_reconstruct_1d, &
-                              weno_tensor_product_reconstruct_2d
-    procedure, private :: weno_tensor_product_assign
-    generic :: assignment(=) => weno_tensor_product_assign
-    final :: weno_tensor_product_final
-  end type weno_tensor_product_type
+    procedure :: init                  => weno_square_init
+    procedure :: add_point             => weno_square_add_point
+    procedure :: calc_recon_matrix     => weno_square_calc_recon_matrix
+    procedure :: calc_ideal_coefs      => weno_square_calc_ideal_coefs
+    procedure :: release_unused_memory => weno_square_release_unused_memory
+    procedure :: clear                 => weno_square_clear
+    procedure, private :: weno_square_reconstruct_1d
+    procedure, private :: weno_square_reconstruct_2d
+    generic :: reconstruct => weno_square_reconstruct_1d, &
+                              weno_square_reconstruct_2d
+    procedure, private :: weno_square_assign
+    generic :: assignment(=) => weno_square_assign
+    final :: weno_square_final
+  end type weno_square_type
 
 contains
 
-  subroutine weno_tensor_product_init(this, nd, sw, xc, yc, is, ie, js, je, mask, id, has_subs)
+  subroutine weno_square_init(this, nd, sw, xc, yc, is, ie, js, je, mask, id, has_subs)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
     integer, intent(in) :: nd
     integer, intent(in) :: sw
     real(8), intent(in), optional :: xc(sw)
@@ -157,11 +157,11 @@ contains
 
     this%initialized = .true.
 
-  end subroutine weno_tensor_product_init
+  end subroutine weno_square_init
 
-  subroutine weno_tensor_product_add_point(this, x, y)
+  subroutine weno_square_add_point(this, x, y)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
     real(8), intent(in) :: x
     real(8), intent(in), optional :: y
 
@@ -196,11 +196,11 @@ contains
       end do
     end if
 
-  end subroutine weno_tensor_product_add_point
+  end subroutine weno_square_add_point
 
-  subroutine weno_tensor_product_calc_recon_matrix(this, ierr)
+  subroutine weno_square_calc_recon_matrix(this, ierr)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
     integer, intent(out) :: ierr
 
     ! Local double double arrays for preserving precision.
@@ -297,11 +297,11 @@ contains
 
     deallocate(A, iA, idx_map)
 
-  end subroutine weno_tensor_product_calc_recon_matrix
+  end subroutine weno_square_calc_recon_matrix
 
-  subroutine weno_tensor_product_calc_ideal_coefs(this, ierr)
+  subroutine weno_square_calc_ideal_coefs(this, ierr)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
     integer, intent(out) :: ierr
 
     ! Local double double arrays for preserving precision.
@@ -360,11 +360,11 @@ contains
     end if
     deallocate(A, AtA, iAtA, gamma)
 
-  end subroutine weno_tensor_product_calc_ideal_coefs
+  end subroutine weno_square_calc_ideal_coefs
 
-  subroutine weno_tensor_product_reconstruct_1d(this, fi, fo, ierr)
+  subroutine weno_square_reconstruct_1d(this, fi, fo, ierr)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
     real(8), intent(in ) :: fi(:)   ! Cell averaged function values
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
@@ -412,11 +412,11 @@ contains
       fo(ipt) = sigma_p * sum(alpha_p / sum(alpha_p) * fs(:,ipt)) - sigma_n * sum(alpha_n / sum(alpha_n) * fs(:,ipt))
     end do
 
-  end subroutine weno_tensor_product_reconstruct_1d
+  end subroutine weno_square_reconstruct_1d
 
-  subroutine weno_tensor_product_reconstruct_2d(this, fi, fo, ierr)
+  subroutine weno_square_reconstruct_2d(this, fi, fo, ierr)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
     real(8), intent(in ) :: fi(:,:) ! Cell averaged function values
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
@@ -471,13 +471,13 @@ contains
       fo(ipt) = sigma_p * sum(alpha_p / sum(alpha_p) * fs(:,ipt)) - sigma_n * sum(alpha_n / sum(alpha_n) * fs(:,ipt))
     end do
 
-  end subroutine weno_tensor_product_reconstruct_2d
+  end subroutine weno_square_reconstruct_2d
 
-  subroutine weno_tensor_product_release_unused_memory(this)
+  subroutine weno_square_release_unused_memory(this)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
 
-    type(weno_tensor_product_type), allocatable :: subs(:)
+    type(weno_square_type), allocatable :: subs(:)
     real(8), allocatable :: gamma(:,:)
     integer i, k, ns
 
@@ -512,11 +512,11 @@ contains
       deallocate(subs, gamma)
     end if
 
-  end subroutine weno_tensor_product_release_unused_memory
+  end subroutine weno_square_release_unused_memory
 
-  subroutine weno_tensor_product_clear(this)
+  subroutine weno_square_clear(this)
 
-    class(weno_tensor_product_type), intent(inout) :: this
+    class(weno_square_type), intent(inout) :: this
 
     this%id     = 0
     this%nd     = 0
@@ -548,12 +548,12 @@ contains
 
     this%initialized = .false.
 
-  end subroutine weno_tensor_product_clear
+  end subroutine weno_square_clear
 
-  subroutine weno_tensor_product_assign(this, other)
+  subroutine weno_square_assign(this, other)
 
-    class(weno_tensor_product_type), intent(inout) :: this
-    class(weno_tensor_product_type), intent(in) :: other
+    class(weno_square_type), intent(inout) :: this
+    class(weno_square_type), intent(in) :: other
 
     call this%clear()
 
@@ -582,14 +582,14 @@ contains
 
     this%initialized = .true.
 
-  end subroutine weno_tensor_product_assign
+  end subroutine weno_square_assign
 
-  subroutine weno_tensor_product_final(this)
+  subroutine weno_square_final(this)
 
-    type(weno_tensor_product_type), intent(inout) :: this
+    type(weno_square_type), intent(inout) :: this
 
     call this%clear()
 
-  end subroutine weno_tensor_product_final
+  end subroutine weno_square_final
 
-end module weno_tensor_product_mod
+end module weno_square_mod

@@ -105,7 +105,7 @@ contains
     integer, intent(in) :: mask(:,:)
     integer, intent(in) :: check_point_idx
 
-    type(weno_tensor_product_type), allocatable :: weno1d
+    type(weno_square_type), allocatable :: weno1d
     integer sw, i, k, ierr
 
     sw = size(mask, 1)
@@ -156,7 +156,7 @@ contains
     integer, intent(in) :: mask(:,:)
     integer, intent(in) :: check_point_idx
 
-    type(weno_tensor_product_type), allocatable :: weno2d
+    type(weno_square_type), allocatable :: weno2d
     integer sw, i, j, k, ierr
 
     sw = size(mask, 1)
@@ -291,7 +291,7 @@ contains
 
   subroutine test_sine()
 
-    type(weno_tensor_product_type), allocatable :: weno1d
+    type(weno_square_type), allocatable :: weno1d
     integer mask(5,1)
     real(8) dx, xi(5), fi(5), fo(2)
     integer sw, i, k, ierr
@@ -323,7 +323,7 @@ contains
 
   subroutine test_acker2016()
 
-    type(weno_tensor_product_type), allocatable :: weno1d
+    type(weno_square_type), allocatable :: weno1d
     integer mask(5,1)
     real(8) dx, fi(5), fo(2)
     integer sw, i, k, ierr
