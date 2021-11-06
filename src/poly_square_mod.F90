@@ -146,7 +146,7 @@ contains
     case (1)
       do ipt = 1, this%npt
         do k = 1, this%sw
-          call calc_monomial(this%x(ipt), k - 1, this%poly(k,ipt))
+          call calc_monomial(this%x(ipt), k - 1, this%poly(ipt,k))
         end do
       end do
     case (2)
