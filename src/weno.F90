@@ -4,6 +4,6 @@ module weno
 
   use weno_square_mod
   use weno_rhombus_mod
-  use poly_tensor_product_mod
+  use poly_square_mod
 
 end module weno

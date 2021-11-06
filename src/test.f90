@@ -236,7 +236,7 @@ contains
 
     integer, intent(in) :: sw
 
-    type(poly_tensor_product_type), allocatable :: poly1d
+    type(poly_square_type), allocatable :: poly1d
     real(8) dx, fi(sw), fo(20)
     integer i, ierr
 
@@ -271,7 +271,7 @@ contains
 
     integer, intent(in) :: sw
 
-    type(poly_tensor_product_type), allocatable :: poly2d
+    type(poly_square_type), allocatable :: poly2d
     integer ierr
 
     allocate(poly2d)

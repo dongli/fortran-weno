@@ -24,7 +24,7 @@ set(source_files
   src/smooth_indicators_mod.F90
   src/weno_square_mod.F90
   src/weno_rhombus_mod.F90
-  src/poly_tensor_product_mod.F90
+  src/poly_square_mod.F90
   src/weno.F90
 )
 

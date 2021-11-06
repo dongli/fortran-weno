@@ -1,4 +1,4 @@
-module poly_tensor_product_mod
+module poly_square_mod
 
   use poly_utils_mod
   use math_mod
@@ -7,9 +7,9 @@ module poly_tensor_product_mod
 
   private
 
-  public poly_tensor_product_type
+  public poly_square_type
 
-  type poly_tensor_product_type
+  type poly_square_type
     logical :: initialized = .false.
     integer :: nd     = 0                ! Dimension number
     integer :: sw     = 0                ! Stencil width
@@ -27,23 +27,23 @@ module poly_tensor_product_mod
     real(8), allocatable :: poly   (:,:) ! Polynomial terms on each evaluation point
     real(8), allocatable :: poly_iA(:,:) ! poly * iA^T
   contains
-    procedure :: init                  => poly_tensor_product_init
-    procedure :: add_point             => poly_tensor_product_add_point
-    procedure :: calc_recon_matrix     => poly_tensor_product_calc_recon_matrix
-    procedure :: release_unused_memory => poly_tensor_product_release_unused_memory
-    procedure :: clear                 => poly_tensor_product_clear
-    procedure :: poly_tensor_product_reconstruct_1d
-    procedure :: poly_tensor_product_reconstruct_2d
-    generic :: reconstruct => poly_tensor_product_reconstruct_1d, &
-                              poly_tensor_product_reconstruct_2d
-    final :: poly_tensor_product_final
-  end type poly_tensor_product_type
+    procedure :: init                  => poly_square_init
+    procedure :: add_point             => poly_square_add_point
+    procedure :: calc_recon_matrix     => poly_square_calc_recon_matrix
+    procedure :: release_unused_memory => poly_square_release_unused_memory
+    procedure :: clear                 => poly_square_clear
+    procedure :: poly_square_reconstruct_1d
+    procedure :: poly_square_reconstruct_2d
+    generic :: reconstruct => poly_square_reconstruct_1d, &
+                              poly_square_reconstruct_2d
+    final :: poly_square_final
+  end type poly_square_type
 
 contains
 
-  subroutine poly_tensor_product_init(this, nd, sw, xc, yc, is, ie, js, je)
+  subroutine poly_square_init(this, nd, sw, xc, yc, is, ie, js, je)
 
-    class(poly_tensor_product_type), intent(inout) :: this
+    class(poly_square_type), intent(inout) :: this
     integer, intent(in) :: nd
     integer, intent(in) :: sw
     real(8), intent(in), optional :: xc(sw)
@@ -86,11 +86,11 @@ contains
 
     this%initialized = .true.
 
-  end subroutine poly_tensor_product_init
+  end subroutine poly_square_init
 
-  subroutine poly_tensor_product_add_point(this, x, y)
+  subroutine poly_square_add_point(this, x, y)
 
-    class(poly_tensor_product_type), intent(inout) :: this
+    class(poly_square_type), intent(inout) :: this
     real(8), intent(in) :: x
     real(8), intent(in), optional :: y
 
@@ -118,11 +118,11 @@ contains
     end if
     deallocate(tmp)
 
-  end subroutine poly_tensor_product_add_point
+  end subroutine poly_square_add_point
 
-  subroutine poly_tensor_product_calc_recon_matrix(this, ierr)
+  subroutine poly_square_calc_recon_matrix(this, ierr)
 
-    class(poly_tensor_product_type), intent(inout) :: this
+    class(poly_square_type), intent(inout) :: this
     integer, intent(out) :: ierr
 
     ! Local double double arrays for preserving precision.
@@ -178,11 +178,11 @@ contains
 
     deallocate(A, iA)
 
-  end subroutine poly_tensor_product_calc_recon_matrix
+  end subroutine poly_square_calc_recon_matrix
 
-  subroutine poly_tensor_product_reconstruct_1d(this, fi, fo, ierr)
+  subroutine poly_square_reconstruct_1d(this, fi, fo, ierr)
 
-    class(poly_tensor_product_type), intent(inout) :: this
+    class(poly_square_type), intent(inout) :: this
     real(8), intent(in ) :: fi(:)   ! Cell averaged function values
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
@@ -202,11 +202,11 @@ contains
 
     fo = matmul(this%poly_iA, fi)
 
-  end subroutine poly_tensor_product_reconstruct_1d
+  end subroutine poly_square_reconstruct_1d
 
-  subroutine poly_tensor_product_reconstruct_2d(this, fi, fo, ierr)
+  subroutine poly_square_reconstruct_2d(this, fi, fo, ierr)
 
-    class(poly_tensor_product_type), intent(inout) :: this
+    class(poly_square_type), intent(inout) :: this
     real(8), intent(in ) :: fi(:,:) ! Cell averaged function values
     real(8), intent(out) :: fo(:)   ! Reconstructed function values on evaluation points
     integer, intent(out) :: ierr
@@ -226,13 +226,13 @@ contains
 
     fo = matmul(this%poly_iA, pack(fi, .true.))
 
-  end subroutine poly_tensor_product_reconstruct_2d
+  end subroutine poly_square_reconstruct_2d
 
-  subroutine poly_tensor_product_release_unused_memory(this)
+  subroutine poly_square_release_unused_memory(this)
 
-    class(poly_tensor_product_type), intent(inout) :: this
+    class(poly_square_type), intent(inout) :: this
 
-    type(poly_tensor_product_type), allocatable :: subs(:)
+    type(poly_square_type), allocatable :: subs(:)
     real(8), allocatable :: ic(:,:)
     integer i, k, ns
 
@@ -242,11 +242,11 @@ contains
     if (allocated(this%y   )) deallocate(this%y   )
     if (allocated(this%poly)) deallocate(this%poly)
 
-  end subroutine poly_tensor_product_release_unused_memory
+  end subroutine poly_square_release_unused_memory
 
-  subroutine poly_tensor_product_clear(this)
+  subroutine poly_square_clear(this)
 
-    class(poly_tensor_product_type), intent(inout) :: this
+    class(poly_square_type), intent(inout) :: this
 
     this%nd     = 0
     this%sw     = 0
@@ -267,14 +267,14 @@ contains
 
     this%initialized = .false.
 
-  end subroutine poly_tensor_product_clear
+  end subroutine poly_square_clear
 
-  subroutine poly_tensor_product_final(this)
+  subroutine poly_square_final(this)
 
-    type(poly_tensor_product_type), intent(inout) :: this
+    type(poly_square_type), intent(inout) :: this
 
     call this%clear()
 
-  end subroutine poly_tensor_product_final
+  end subroutine poly_square_final
 
-end module poly_tensor_product_mod
+end module poly_square_mod
