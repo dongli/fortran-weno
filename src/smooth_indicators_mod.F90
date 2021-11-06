@@ -18,6 +18,14 @@ contains
 
   end function smooth_indicator_3
 
+  pure real(8) function smooth_indicator_2x2(a) result(res)
+
+    real(8), intent(in) :: a(:) ! 4
+
+    res = a(2)**2 + a(3)**2 + 7 * a(4)**2 / 6
+
+  end function smooth_indicator_2x2
+
   pure real(8) function smooth_indicator_3x3(a) result(res)
 
     real(8), intent(in) :: a(:) ! 9

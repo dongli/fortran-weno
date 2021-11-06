@@ -134,8 +134,8 @@ contains
     if (allocated(this%poly   )) deallocate(this%poly   )
     if (allocated(this%poly_iA)) deallocate(this%poly_iA)
 
-    allocate(this%poly   (this%nc ,this%npt))
-    allocate(this%poly_iA(this%npt,this%nc ))
+    allocate(this%poly   (this%npt,this%nc))
+    allocate(this%poly_iA(this%npt,this%nc))
 
     allocate( A(this%nc,this%nc))
     allocate(iA(this%nc,this%nc))
@@ -154,7 +154,7 @@ contains
         k = 1
         do j = 1, this%sw
           do i = 1, this%sw
-            call calc_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(k,ipt))
+            call calc_monomial(this%x(ipt), this%y(ipt), i - 1, j - 1, this%poly(ipt,k))
             k = k + 1
           end do
         end do
@@ -168,13 +168,14 @@ contains
     case (2)
       call calc_poly_tensor_product_integral_matrix(this%sw, this%sw, this%xc, this%yc, A)
     end select
+    A = transpose(A)
     call inverse_matrix(A, iA, ierr)
     if (ierr /= 0) then
       deallocate(A, iA)
       return
     end if
 
-    this%poly_iA = transpose(matmul(iA, this%poly))
+    this%poly_iA = matmul(this%poly, iA)
 
     deallocate(A, iA)
 

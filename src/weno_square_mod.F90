@@ -145,6 +145,8 @@ contains
             end select
           case (2)
             select case (this%sub_sw)
+            case (2)
+              this%subs(k)%smooth_indicator => smooth_indicator_2x2
             case (3)
               this%subs(k)%smooth_indicator => smooth_indicator_3x3
             end select
@@ -444,7 +446,7 @@ contains
     ! Calculate point values from each available sub-stencils and smoothness
     ! indicators for those sub-stencils.
     do k = 1, this%ns
-      this%subs(k)%a = matmul(this%subs(k)%iA, pack(fi(this%is:this%ie,this%js:this%je), .true.))
+      this%subs(k)%a = matmul(this%subs(k)%iA, pack(fi(this%subs(k)%is:this%subs(k)%ie,this%subs(k)%js:this%subs(k)%je), .true.))
       fs(k,:) = matmul(this%subs(k)%poly, this%subs(k)%a)
       this%subs(k)%beta = this%subs(k)%smooth_indicator(this%subs(k)%a)
     end do
@@ -578,6 +580,8 @@ contains
     this%poly      = other%poly
     this%iA        = other%iA
     this%poly_iA   = other%poly_iA
+
+    this%smooth_indicator => other%smooth_indicator
 
     this%initialized = .true.
 
